@@ -1,0 +1,374 @@
+/* Abyssal Insight theme — ported from the Replit design (Cinzel + Inter,
+   teal-on-abyss palette). Applied to the working Dash app. */
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap");
+
+:root {
+  --abyss:        #020D12;
+  --abyss-2:      #04161c;
+  --text:         #DEE9ED;
+  --muted:        #85A1AD;
+  --teal:         #1AE6CE;
+  --teal-dim:     #11b8a4;
+  --border:       #1A4D47;
+  --border-soft:  rgba(26, 230, 206, 0.14);
+  --panel:        rgba(8, 22, 28, 0.55);
+  --panel-solid:  rgba(6, 18, 23, 0.92);
+  --good:         #1ae6a3;
+  --bad:          #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background-color: var(--abyss);
+  color: var(--text);
+  font-family: "Inter", sans-serif;
+  min-height: 100vh;
+}
+
+/* Fixed rift backdrop + abyssal gradient wash for readability.
+   URL is RELATIVE to this stylesheet (/assets/theme.css) so it resolves
+   correctly even if the app is served under a path prefix. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url("dark-rift.png") center / cover no-repeat;
+  opacity: 0.6;
+  z-index: -2;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(2,13,18,0.12) 0%, rgba(2,13,18,0.5) 55%, rgba(2,13,18,0.82) 100%);
+  z-index: -1;
+}
+
+/* ---- Typography ---- */
+.ab-title {
+  font-family: "Cinzel", serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 44px;
+  text-align: center;
+  margin: 0;
+  color: var(--text);
+  text-shadow: 0 0 24px rgba(26, 230, 206, 0.25);
+}
+.ab-subtitle {
+  text-align: center;
+  color: var(--teal);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 6px 0 4px;
+}
+.ab-playerline { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+
+.section-h {
+  font-family: "Cinzel", serif;
+  color: var(--teal);
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  margin: 28px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.section-sub { color: var(--muted); font-size: 13px; margin: -6px 0 16px; }
+
+/* ---- Panels & cards ---- */
+.ab-panel {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 22px 26px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.ab-card {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 14px 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: relative;
+  overflow: hidden;
+}
+.ab-card::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg, var(--teal), transparent);
+}
+.ab-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.ab-card .value { font-size: 26px; font-weight: 700; color: var(--text); margin-top: 4px; }
+
+/* ---- Form controls ---- */
+.field-label {
+  display: block; color: var(--muted); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;
+}
+input[type="text"], input[type="number"] {
+  width: 100%; background: rgba(255,255,255,0.03); color: var(--text);
+  border: 1px solid var(--border-soft); border-radius: 6px; padding: 10px 12px;
+  font-family: inherit; font-size: 14px; outline: none;
+}
+input[type="text"]:focus, input[type="number"]:focus { border-color: var(--teal); }
+input::placeholder { color: #4f6b73; }
+/* Kill Chrome's white autofill highlight on prefilled inputs. */
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--abyss-2) inset;
+  caret-color: var(--text);
+}
+
+/* dcc.Dropdown (react-select v1) */
+.Select-control, .is-focused:not(.is-open) > .Select-control {
+  background: rgba(255,255,255,0.03) !important; border: 1px solid var(--border-soft) !important;
+  border-radius: 6px !important; color: var(--text) !important; box-shadow: none !important;
+}
+.Select-value-label, .Select--single > .Select-control .Select-value .Select-value-label,
+.Select-placeholder { color: var(--text) !important; }
+.Select-menu-outer {
+  background: var(--abyss-2) !important; border: 1px solid var(--border-soft) !important;
+  border-radius: 6px !important; color: var(--text) !important;
+}
+.VirtualizedSelectOption, .Select-option { background: var(--abyss-2) !important; color: var(--text) !important; }
+.VirtualizedSelectFocusedOption, .Select-option.is-focused { background: rgba(26,230,206,0.12) !important; color: var(--teal) !important; }
+.Select-arrow { border-color: var(--teal) transparent transparent !important; }
+.Select-input > input { color: var(--text) !important; }
+
+/* dcc.Slider */
+.rc-slider-rail { background: var(--border) !important; }
+.rc-slider-track { background: var(--teal) !important; }
+.rc-slider-handle { border-color: var(--teal) !important; background: var(--abyss-2) !important; opacity: 1; }
+.rc-slider-handle:hover, .rc-slider-handle-active:active { border-color: var(--teal) !important; box-shadow: 0 0 0 5px rgba(26,230,206,0.2) !important; }
+.rc-slider-mark-text { color: var(--muted) !important; }
+
+/* Segmented role radio */
+.role-radio { display: inline-flex; gap: 0; border: 1px solid var(--border-soft); border-radius: 8px; overflow: hidden; }
+.role-radio label {
+  padding: 8px 16px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600;
+  letter-spacing: 0.04em; border-right: 1px solid var(--border-soft); transition: all .15s;
+}
+.role-radio label:last-child { border-right: none; }
+.role-radio input { display: none; }
+.role-radio input:checked + label,
+.role-radio label:has(input:checked) { background: rgba(26,230,206,0.14); color: var(--teal); }
+
+/* Buttons */
+.ab-btn {
+  background: linear-gradient(135deg, var(--teal), var(--teal-dim));
+  color: #04161c; font-family: "Cinzel", serif; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.12em; border: none; border-radius: 8px; padding: 13px 30px; cursor: pointer;
+  font-size: 14px; box-shadow: 0 4px 20px rgba(26,230,206,0.25); transition: transform .1s, box-shadow .15s;
+}
+.ab-btn:hover { box-shadow: 0 6px 26px rgba(26,230,206,0.4); transform: translateY(-1px); }
+
+/* Tabs (dcc.Tabs) — themed via classes so light mode can override. */
+.ab-tabs { border-bottom: none !important; }
+.ab-tab {
+  background: transparent !important; border: none !important; color: var(--muted) !important;
+  font-family: "Cinzel", serif !important; text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 14px !important; padding: 10px 28px !important; font-weight: 600; border-radius: 8px;
+}
+.ab-tab--sel {
+  color: var(--teal) !important; background: rgba(26, 230, 206, 0.10) !important;
+  border: 1px solid var(--border-soft) !important; border-radius: 8px !important;
+}
+
+/* Theme toggle button (top-right). */
+.theme-toggle {
+  position: fixed; top: 26px; right: 26px; width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--border-soft); background: var(--panel); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; z-index: 10;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); transition: border-color .15s;
+}
+.theme-toggle:hover { border-color: var(--teal); }
+.theme-toggle img { width: 22px; height: 22px; }
+.theme-toggle .icon-moon { display: none; }
+body.light .theme-toggle .icon-sun { display: none; }
+body.light .theme-toggle .icon-moon { display: inline-flex; }
+
+/* ---- LIGHT THEME (toggled by adding `light` class to <body>) ---- */
+body.light {
+  --text: #21404d;
+  --muted: #5d7682;
+  --teal: #1c8597;
+  --teal-dim: #2f6f84;
+  --border: #b9cdd4;
+  --border-soft: rgba(40, 90, 110, 0.18);
+  --panel: rgba(255, 255, 255, 0.55);
+  --panel-solid: rgba(255, 255, 255, 0.92);
+  --abyss: #dfe7ea;
+  --abyss-2: #ffffff;
+  background-color: #dfe7ea;
+  color: var(--text);
+}
+body.light::before { background-image: url("light-rift.png"); opacity: 0.6; }
+body.light::after {
+  background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(223,231,234,0.58) 55%, rgba(223,231,234,0.9) 100%);
+}
+body.light .ab-title { text-shadow: none; }
+body.light input[type="text"], body.light input[type="number"] {
+  background: rgba(255, 255, 255, 0.72);
+}
+body.light input::placeholder { color: #8aa0aa; }
+body.light .Select-control { background: rgba(255, 255, 255, 0.72) !important; }
+body.light .Select-menu-outer, body.light .VirtualizedSelectOption, body.light .Select-option {
+  background: #ffffff !important;
+}
+body.light .VirtualizedSelectFocusedOption, body.light .Select-option.is-focused {
+  background: rgba(28, 133, 151, 0.12) !important; color: var(--teal) !important;
+}
+/* DataTable cells carry inline color from style_cell; override for light. */
+body.light .dash-spreadsheet-container .dash-cell,
+body.light .dash-spreadsheet-container .dash-cell-value,
+body.light .dash-spreadsheet-container .column-header-name {
+  color: #21404d !important;
+}
+body.light .dash-spreadsheet-container .dash-header {
+  background-color: rgba(40, 90, 110, 0.08) !important; color: #5d7682 !important;
+}
+
+/* Detailed metrics table */
+.metric-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.metric-table th {
+  text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid var(--border-soft);
+}
+.metric-table td { padding: 11px 10px; border-bottom: 1px solid rgba(26,77,71,0.35); vertical-align: top; }
+.metric-table tr:hover td { background: rgba(26,230,206,0.04); }
+.metric-name { font-weight: 600; color: var(--text); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Readiness banner */
+.readiness {
+  border-radius: 10px; padding: 14px 18px; background: var(--panel);
+  border: 1px solid var(--border-soft); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+
+/* Background-backfill banner */
+.backfill-banner {
+  border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; font-size: 14px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  border: 1px solid var(--border-soft); background: var(--panel);
+}
+.backfill-banner.loading { border-color: rgba(230, 192, 26, 0.4); color: var(--text); }
+.backfill-banner.ready { border-color: var(--teal); }
+.backfill-banner.failed { border-color: var(--bad); color: var(--text); }
+
+/* Coaching markdown */
+.coach-md { color: var(--text); line-height: 1.6; }
+.coach-md strong { color: var(--teal); }
+
+/* Itemization page */
+.item-link, .macro-tab {
+  text-decoration: none; cursor: pointer; display: inline-flex; align-items: center;
+}
+.item-link:hover, .macro-tab:hover { color: var(--teal) !important; }
+.item-back {
+  color: var(--teal); text-decoration: none; font-family: "Cinzel", serif;
+  font-size: 13px; letter-spacing: 0.06em; white-space: nowrap;
+}
+.item-back:hover { text-decoration: underline; }
+.item-game-table { width: 100%; }
+.item-game-row.sel { background: rgba(26, 230, 206, 0.10); }
+.item-game-link {
+  color: var(--teal); text-decoration: none; font-family: "Inter", monospace;
+  font-size: 12px; font-weight: 600;
+}
+.item-game-link:hover { text-decoration: underline; }
+.item-subhead {
+  font-family: "Cinzel", serif; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.08em; font-size: 12px; margin: 16px 0 8px;
+}
+.item-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.item-chip {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px 5px 5px;
+  background: rgba(26, 230, 206, 0.06); border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.item-icon { width: 30px; height: 30px; border-radius: 5px; }
+.item-chip-name { color: var(--text); font-size: 12px; }
+.champ-badge { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.champ-icon {
+  width: 48px; height: 48px; border-radius: 8px; border: 2px solid var(--teal);
+}
+.champ-name { font-family: "Cinzel", serif; color: var(--teal); font-size: 17px; font-weight: 700; }
+.champ-sub { color: var(--muted); font-size: 12px; letter-spacing: 0.04em; }
+
+/* Itemization "working" indicator (per-game analysis is a ~30s round-trip) */
+.item-loading {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; min-height: 240px; padding: 40px 20px; text-align: center;
+  border: 1px solid var(--border-soft); border-radius: 12px; background: var(--panel);
+}
+.item-spinner {
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 4px solid rgba(26, 230, 206, 0.18); border-top-color: var(--teal);
+  animation: item-spin 0.9s linear infinite;
+}
+@keyframes item-spin { to { transform: rotate(360deg); } }
+.item-loading-title {
+  font-family: "Cinzel", serif; color: var(--teal); font-size: 18px;
+  letter-spacing: 0.08em; font-weight: 700;
+}
+.item-loading-sub { color: var(--muted); font-size: 13px; max-width: 440px; line-height: 1.5; }
+
+/* Full-screen "Working" overlay (Initiate Sequence fetch) */
+.working-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 12, 16, 0.82); backdrop-filter: blur(3px);
+}
+.working-card {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  padding: 40px 52px; border-radius: 16px; text-align: center;
+  background: var(--panel); border: 1px solid var(--border-soft);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.working-spinner {
+  width: 54px; height: 54px; border-radius: 50%;
+  border: 5px solid rgba(26, 230, 206, 0.18); border-top-color: var(--teal);
+  animation: item-spin 0.9s linear infinite;
+}
+.working-title {
+  font-family: "Cinzel", serif; color: var(--teal); font-size: 22px;
+  letter-spacing: 0.12em; font-weight: 700;
+}
+.working-sub { color: var(--muted); font-size: 13px; max-width: 340px; line-height: 1.5; }
+.working-cancel {
+  margin-top: 6px; background: transparent; color: var(--muted);
+  border: 1px solid var(--border-soft); border-radius: 8px; padding: 9px 28px;
+  font-family: "Cinzel", serif; letter-spacing: 0.08em; font-size: 13px;
+  text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+}
+.working-cancel:hover { color: var(--bad); border-color: var(--bad); }
+
+/* Macro/Game Analysis link styling is shared with .item-link (see Itemization page). */
+.macro-team-card {
+  flex: 1; min-width: 280px; padding: 16px 18px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--border-soft);
+  display: block; text-decoration: none; color: inherit; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.macro-team-card:hover { border-color: var(--teal); background: rgba(26, 230, 206, 0.04); }
+.macro-team-card.focus { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal) inset; }
+.macro-team-cta {
+  margin-top: 12px; font-size: 12px; letter-spacing: 0.04em; color: var(--muted);
+  font-family: "Cinzel", serif; text-transform: uppercase;
+}
+.macro-team-cta.focus { color: var(--teal); }
+.macro-team-title {
+  font-family: "Cinzel", serif; font-size: 16px; font-weight: 700;
+  letter-spacing: 0.08em; margin-bottom: 10px;
+}
+.macro-champs { display: flex; gap: 6px; margin-bottom: 10px; }
+.macro-champ-icon { width: 40px; height: 40px; border-radius: 7px; border: 1px solid var(--border-soft); }
+.macro-team-sub { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+
+/* Dash DataTable dark theme is applied inline in layout. */

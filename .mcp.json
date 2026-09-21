@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "/Users/chris.crawford/src/ai-dev-kit/databricks-mcp-server/.venv/bin/python",
+      "args": [
+        "/Users/chris.crawford/src/ai-dev-kit/databricks-mcp-server/run_server.py"
+      ],
+      "env": {
+        "DATABRICKS_CONFIG_PROFILE": "default"
+      },
+      "defer_loading": true
+    }
+  }
+}

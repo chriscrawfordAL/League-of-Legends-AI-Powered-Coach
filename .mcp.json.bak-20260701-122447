@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "/Users/chris.crawford/src/ai-dev-kit/databricks-mcp-server/.venv/bin/python",
+      "args": [
+        "/Users/chris.crawford/src/ai-dev-kit/databricks-mcp-server/run_server.py"
+      ],
+      "env": {
+        "DATABRICKS_CONFIG_PROFILE": "default"
+      },
+      "defer_loading": true
+    },
+    "lakedraw": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "/Users/chris.crawford/src/claude_hw/league_ai_coach/mcp/mcp_proxy.py",
+        "--server-url",
+        "https://lakedraw-7474654280603666.aws.databricksapps.com/mcp/",
+        "--host",
+        "https://fevm-lakedraw.cloud.databricks.com",
+        "--email-header",
+        "X-MCP-Caller-Email",
+        "--session-header",
+        "X-MCP-Session-Id"
+      ],
+      "env": {}
+    }
+  }
+}

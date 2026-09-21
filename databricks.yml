@@ -1,0 +1,107 @@
+# Databricks Asset Bundle: the ingestion job + the Dash app.
+#
+# Deploy:  databricks bundle deploy  -t dev --profile default
+# Run app: databricks bundle run league_ai_coach -t dev --profile default
+# (deploy uploads code; run applies config and starts the app.)
+#
+# Fill the variables below (warehouse id, serving endpoint, secret scope) before
+# deploying. Resource IDs must NOT be hardcoded in source — they live here.
+bundle:
+  name: league-ai-coach
+
+variables:
+  warehouse_id:
+    description: SQL warehouse id the app queries gold tables through.
+    default: "a3d6bc3533b85843"   # ccrawford_xs
+  serving_endpoint:
+    description: FMAPI chat endpoint name.
+    default: databricks-claude-sonnet-4-6
+  secret_scope:
+    description: Secret scope holding the Riot API key.
+    default: league_ai_coach
+
+resources:
+  jobs:
+    ingest_matches:
+      name: league-ai-coach-ingest
+      tasks:
+        - task_key: ingest
+          spark_python_task:
+            python_file: jobs/ingest_matches.py
+            # Serverless tasks can't take env vars; pass the UC destination +
+            # default pull settings as params (app-triggered runs send their own).
+            parameters:
+              - "--catalog"
+              - "ccrawford"
+              - "--schema"
+              - "league_ai_coach"
+              - "--queue-mode"
+              - "both"
+              - "--count"
+              - "25"
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - requests>=2.32.0
+      # Scheduled ingestion (also triggerable on demand by the app). Paused:
+      # the dev Riot key expires every 24h, so we run on-demand via the app's
+      # Refresh button. Flip to UNPAUSED once a non-expiring (prod) key is set.
+      schedule:
+        quartz_cron_expression: "0 0 */6 * * ?"  # every 6 hours
+        timezone_id: America/Los_Angeles
+        pause_status: PAUSED
+
+  apps:
+    league_ai_coach:
+      name: league-ai-coach
+      source_code_path: .
+      description: "League of Legends AI coach (analyzed player set per-request)."
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: serving-endpoint
+          serving_endpoint:
+            name: ${var.serving_endpoint}
+            permission: CAN_QUERY
+        - name: ingest-job
+          job:
+            id: ${resources.jobs.ingest_matches.id}
+            permission: CAN_MANAGE_RUN
+        - name: riot-api-key
+          secret:
+            scope: ${var.secret_scope}
+            key: riot_api_key
+            permission: READ
+      config:
+        command:
+          - python
+          - app/app.py
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: SERVING_ENDPOINT
+            value_from: serving-endpoint
+          - name: INGEST_JOB_ID
+            value_from: ingest-job
+          - name: RIOT_API_KEY
+            value_from: riot-api-key
+          - name: UC_CATALOG
+            value: "ccrawford"
+          - name: UC_SCHEMA
+            value: "league_ai_coach"
+          - name: BENCHMARK_TIER
+            value: "GOLD"
+          - name: QUEUE_MODE
+            value: "both"
+          - name: MATCH_FETCH_COUNT
+            value: "25"
+
+targets:
+  dev:
+    default: true
+    mode: development

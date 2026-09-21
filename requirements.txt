@@ -1,0 +1,8 @@
+# Databricks App (Dash) runtime dependencies.
+# pyspark is NOT listed: it is provided by the job cluster for ingestion and is
+# not used by the app process.
+dash==2.18.2
+plotly>=5.0.0  # dcc.Graph timeline charts (transitive via dash; pinned as we import it directly)
+databricks-sdk>=0.40.0
+databricks-sql-connector>=3.7.0
+requests>=2.32.0

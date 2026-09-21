@@ -1,0 +1,31 @@
+# Databricks Apps runtime config (used by UI deployments).
+# Resource IDs are injected via `valueFrom` — never hardcode workspace IDs.
+command:
+  - python
+  - app/app.py
+
+env:
+  # SQL warehouse the app queries gold tables through.
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  # FMAPI chat endpoint that writes the coaching narrative.
+  - name: SERVING_ENDPOINT
+    valueFrom: serving-endpoint
+  # Ingestion job the "Refresh from Riot" button triggers.
+  - name: INGEST_JOB_ID
+    valueFrom: ingest-job
+  # Riot developer key, sourced from a Databricks secret (never in source).
+  - name: RIOT_API_KEY
+    valueFrom: riot-api-key
+  # Unity Catalog destination (plain values, safe to commit).
+  - name: UC_CATALOG
+    value: "ccrawford"
+  - name: UC_SCHEMA
+    value: "league_ai_coach"
+  - name: BENCHMARK_TIER
+    value: "GOLD"
+  # Default pull settings (the UI toggles override per refresh).
+  - name: QUEUE_MODE
+    value: "both"
+  - name: MATCH_FETCH_COUNT
+    value: "25"
