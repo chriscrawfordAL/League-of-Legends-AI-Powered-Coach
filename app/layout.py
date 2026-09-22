@@ -142,7 +142,13 @@ def serve_layout() -> html.Div:
         dcc.Store(id="backfill-store"),  # background backfill {run_id, summoner, region}
         dcc.Store(id="nav-store"),        # {seq, target} drives post-Initiate navigation
         dcc.Store(id="cancelled", data=0),  # seq of the most recently cancelled request
+        dcc.Store(id="setup-store"),      # first-run wizard state {step, catalog, schema, run_id, status}
         dcc.Interval(id="backfill-poll", interval=15000, n_intervals=0, disabled=True),
+        # One-shot boot trigger: fires once on load to decide whether to show the
+        # first-run setup wizard. `setup-poll` drives the cohort-seed progress.
+        dcc.Interval(id="setup-boot", interval=500, n_intervals=0, max_intervals=1),
+        dcc.Interval(id="setup-poll", interval=15000, n_intervals=0, disabled=True),
+        _setup_overlay(),
         # Full-screen "Working" overlay shown during the Initiate fetch.
         html.Div(id="working-overlay", className="working-overlay", style={"display": "none"},
                  children=html.Div(className="working-card", children=[
@@ -181,6 +187,61 @@ def serve_layout() -> html.Div:
         _itemization_view(),
         _macro_view(),
     ])
+
+
+def _setup_overlay() -> html.Div:
+    """First-run setup wizard. Hidden by default; the boot callback shows it when
+    the destination is un-provisioned. Step 1 picks a catalog + schema (with the
+    option to create a schema); Next seeds the tier/role benchmarks by triggering
+    the ingest job; on a download failure a Riot API key can be entered + retried."""
+    return html.Div(id="setup-overlay", className="setup-overlay",
+                    style={"display": "none"}, children=html.Div(
+        className="setup-card", children=[
+            html.Div("First-time setup", className="setup-title"),
+            html.Div("Choose where Abyssal Insight stores its data, then download "
+                     "the tier & role benchmarks it grades players against.",
+                     className="setup-sub"),
+            # --- Step 1: destination -------------------------------------------
+            html.Div(id="setup-step1", children=[
+                _field("Catalog", dcc.Dropdown(
+                    id="setup-catalog", placeholder="Select a catalog…",
+                    className="setup-dd")),
+                _field("Schema", dcc.Dropdown(
+                    id="setup-schema", placeholder="Select a schema…",
+                    className="setup-dd")),
+                html.Div("Or create a new schema in the selected catalog:",
+                         className="setup-hint"),
+                html.Div(style={"display": "flex", "gap": "10px", "alignItems": "center",
+                                "flexWrap": "wrap", "marginBottom": "6px"}, children=[
+                    dcc.Input(id="setup-new-schema", type="text",
+                              placeholder="new_schema_name",
+                              style={"flex": "1", "minWidth": "200px"}),
+                    html.Button("Create schema", id="setup-create-schema-btn",
+                                n_clicks=0, className="ab-btn ab-btn--ghost"),
+                ]),
+                html.Div(id="setup-schema-status", className="setup-status"),
+                html.Div(style={"textAlign": "center", "marginTop": "16px"}, children=[
+                    html.Button("Next", id="setup-next-btn", n_clicks=0,
+                                className="ab-btn"),
+                ]),
+            ]),
+            # --- Step 2: download progress + key fallback ----------------------
+            html.Div(id="setup-download-status", className="setup-status"),
+            html.Div(id="setup-key-panel", style={"display": "none"}, children=[
+                html.Div("The benchmark download couldn't reach Riot — this usually "
+                         "means the Riot API key is missing or expired. Enter a valid "
+                         "key and retry.", className="setup-sub"),
+                html.Div(style={"display": "flex", "gap": "10px", "alignItems": "center",
+                                "flexWrap": "wrap"}, children=[
+                    dcc.Input(id="setup-key-input", type="password",
+                              placeholder="RGAPI-…",
+                              style={"flex": "1", "minWidth": "220px"}),
+                    html.Button("Save key & retry", id="setup-key-btn", n_clicks=0,
+                                className="ab-btn"),
+                ]),
+                html.Div(id="setup-key-status", className="setup-status"),
+            ]),
+        ]))
 
 
 def _macro_view() -> html.Div:

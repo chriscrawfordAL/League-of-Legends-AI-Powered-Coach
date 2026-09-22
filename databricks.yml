@@ -32,9 +32,9 @@ resources:
             # default pull settings as params (app-triggered runs send their own).
             parameters:
               - "--catalog"
-              - "ccrawford"
+              - "cmegdemos_catalog"
               - "--schema"
-              - "league_ai_coach"
+              - "ccrawford_league_ai_coach"
               - "--queue-mode"
               - "both"
               - "--count"
@@ -76,6 +76,13 @@ resources:
           secret:
             scope: ${var.secret_scope}
             key: riot_api_key
+            # READ injects the key as RIOT_API_KEY. The first-run setup wizard's
+            # "enter a Riot key" fallback WRITES this secret, which needs a WRITE
+            # ACL on the scope for the app SP (not expressible here) — grant it at
+            # deploy:  databricks secrets put-acl <scope> <app-sp-app-id> WRITE
+            # The wizard also creates schemas via the SQL warehouse, so the app SP
+            # needs CREATE SCHEMA on any target catalog:
+            #   GRANT CREATE SCHEMA ON CATALOG <catalog> TO `<app-sp-app-id>`
             permission: READ
       config:
         command:
@@ -91,9 +98,9 @@ resources:
           - name: RIOT_API_KEY
             value_from: riot-api-key
           - name: UC_CATALOG
-            value: "ccrawford"
+            value: "cmegdemos_catalog"
           - name: UC_SCHEMA
-            value: "league_ai_coach"
+            value: "ccrawford_league_ai_coach"
           - name: BENCHMARK_TIER
             value: "GOLD"
           - name: QUEUE_MODE

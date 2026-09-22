@@ -485,6 +485,153 @@ def register_callbacks(app) -> None:
         verdict = coach.analyze_itemization(facts)
         return _item_analysis_panel(facts, verdict)
 
+    # ----------------------------------------------------------------------
+    # First-run setup wizard: pick a catalog/schema (create a schema if needed),
+    # then seed the tier/role benchmark tables via the cohort job. On a download
+    # failure, the user can enter a Riot API key and retry. State lives in
+    # `setup-store`; `setup-poll` polls the seed job (same shape as `_poll`).
+    # ----------------------------------------------------------------------
+    _ERR = {"color": "#ff6b6b"}
+    _OK = {"color": "#1ae6ce"}
+
+    @app.callback(
+        Output("setup-overlay", "style"),
+        Output("setup-catalog", "options"),
+        Output("setup-store", "data"),
+        Input("setup-boot", "n_intervals"),
+        prevent_initial_call=True,
+    )
+    def _setup_boot(_n):
+        try:
+            if data_access.setup_complete():
+                return {"display": "none"}, no_update, no_update
+        except Exception:  # noqa: BLE001 — warehouse cold/unavailable: show the wizard
+            pass
+        opts = [{"label": c, "value": c} for c in data_access.list_catalogs()]
+        return {"display": "flex"}, opts, {"step": 1}
+
+    @app.callback(
+        Output("setup-schema", "options"),
+        Output("setup-schema", "value"),
+        Input("setup-catalog", "value"),
+        prevent_initial_call=True,
+    )
+    def _setup_schemas(catalog):
+        if not catalog:
+            return [], None
+        return [{"label": s, "value": s} for s in data_access.list_schemas(catalog)], None
+
+    @app.callback(
+        Output("setup-schema-status", "children"),
+        Output("setup-schema", "options", allow_duplicate=True),
+        Output("setup-schema", "value", allow_duplicate=True),
+        Input("setup-create-schema-btn", "n_clicks"),
+        State("setup-catalog", "value"),
+        State("setup-new-schema", "value"),
+        prevent_initial_call=True,
+    )
+    def _setup_create_schema(_n, catalog, new_schema):
+        name = (new_schema or "").strip()
+        ok, msg = data_access.create_schema(catalog, name)
+        if not ok:
+            return html.Div(msg, style=_ERR), no_update, no_update
+        opts = [{"label": s, "value": s} for s in data_access.list_schemas(catalog)]
+        return html.Div(msg, style=_OK), opts, name
+
+    @app.callback(
+        Output("setup-download-status", "children"),
+        Output("setup-poll", "disabled"),
+        Output("setup-step1", "style"),
+        Output("setup-store", "data", allow_duplicate=True),
+        Output("setup-overlay", "style", allow_duplicate=True),
+        Input("setup-next-btn", "n_clicks"),
+        State("setup-catalog", "value"),
+        State("setup-schema", "value"),
+        prevent_initial_call=True,
+    )
+    def _setup_next(_n, catalog, schema):
+        if not catalog or not schema:
+            return (html.Div("Pick a catalog and a schema first.", style=_ERR),
+                    True, no_update, no_update, no_update)
+        data_access.save_app_config(catalog, schema, False)
+        config.set_destination(catalog, schema)
+        hide_step1 = {"display": "none"}
+        # If this schema is already seeded, finish immediately (no re-download).
+        if data_access.benchmarks_present(catalog, schema):
+            data_access.save_app_config(catalog, schema, True)
+            return (html.Div("Benchmarks already present — setup complete.", style=_OK),
+                    True, hide_step1, {"step": "done"}, {"display": "none"})
+        res = data_access.trigger_cohort(catalog, schema)
+        if res.get("status") != "started":
+            return (html.Div("Couldn't start the download: "
+                             f"{res.get('message', 'unknown error')}", style=_ERR),
+                    True, no_update, {"step": 2, "status": "error"}, no_update)
+        return (html.Div("Downloading tier & role benchmarks — this can take several "
+                         "minutes. You can leave this open."),
+                False, hide_step1,
+                {"step": 2, "catalog": catalog, "schema": schema,
+                 "run_id": res["run_id"], "status": "running"},
+                no_update)
+
+    @app.callback(
+        Output("setup-key-panel", "style"),
+        Output("setup-download-status", "children", allow_duplicate=True),
+        Output("setup-poll", "disabled", allow_duplicate=True),
+        Output("setup-store", "data", allow_duplicate=True),
+        Output("setup-overlay", "style", allow_duplicate=True),
+        Input("setup-poll", "n_intervals"),
+        State("setup-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _setup_poll(_n, store):
+        store = store or {}
+        if store.get("status") != "running" or not store.get("run_id"):
+            return no_update, no_update, True, no_update, no_update
+        st = data_access.job_run_status(store["run_id"])
+        life, result = st.get("life"), st.get("result")
+        if life == "TERMINATED" and result == "SUCCESS":
+            data_access.save_app_config(store["catalog"], store["schema"], True)
+            config.set_destination(store["catalog"], store["schema"])
+            return (no_update,
+                    html.Div("Setup complete — benchmarks downloaded.", style=_OK),
+                    True, {**store, "status": "done"}, {"display": "none"})
+        if life in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED") or \
+                result in ("FAILED", "TIMEDOUT", "CANCELED"):
+            return ({"display": "block"},
+                    html.Div("The benchmark download failed — likely a missing or "
+                             "expired Riot API key.", style=_ERR),
+                    True, {**store, "status": "failed"}, no_update)
+        return no_update, no_update, False, no_update, no_update  # still running
+
+    @app.callback(
+        Output("setup-key-status", "children"),
+        Output("setup-store", "data", allow_duplicate=True),
+        Output("setup-poll", "disabled", allow_duplicate=True),
+        Output("setup-download-status", "children", allow_duplicate=True),
+        Output("setup-key-panel", "style", allow_duplicate=True),
+        Input("setup-key-btn", "n_clicks"),
+        State("setup-key-input", "value"),
+        State("setup-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _setup_key(_n, key, store):
+        store = store or {}
+        ok, msg = data_access.save_riot_key(key)
+        if not ok:
+            return html.Div(msg, style=_ERR), no_update, no_update, no_update, no_update
+        catalog, schema = store.get("catalog"), store.get("schema")
+        res = data_access.trigger_cohort(catalog, schema)
+        if res.get("status") != "started":
+            return (html.Div(f"Key saved, but couldn't restart: "
+                             f"{res.get('message', 'unknown error')}", style=_ERR),
+                    no_update, no_update, no_update, no_update)
+        return (html.Div("Key saved — retrying the download.", style=_OK),
+                {**store, "run_id": res["run_id"], "status": "running"},
+                False,
+                html.Div("Downloading tier & role benchmarks — this can take several "
+                         "minutes."),
+                {"display": "none"})
+
 # --------------------------------------------------------------------------
 # Render helpers (Abyssal Insight styling)
 # --------------------------------------------------------------------------

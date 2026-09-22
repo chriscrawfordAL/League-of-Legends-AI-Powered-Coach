@@ -169,6 +169,195 @@ def load_challenge_benchmarks(tier: str | None = None) -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# First-run setup: catalog/schema selection, pointer persistence, seeding.
+# The app is provisioned per-deploy. A small pointer table (_app_config) kept at
+# the BOOTSTRAP destination (the deploy-default UC_CATALOG.UC_SCHEMA from env,
+# which always exists) records the catalog/schema the user chose in the wizard
+# plus whether the tier/role benchmark seed has completed. The wizard seeds the
+# benchmark tables by triggering the ingest job in cohort mode.
+# ---------------------------------------------------------------------------
+
+_APP_CONFIG_TABLE = "_app_config"
+
+
+def _bootstrap_schema() -> tuple[str, str]:
+    """The fixed (catalog, schema) holding the _app_config pointer — the deploy
+    default from env, created at deploy time so it always exists."""
+    return (os.environ.get("UC_CATALOG", config.UC_CATALOG),
+            os.environ.get("UC_SCHEMA", config.UC_SCHEMA))
+
+
+def _bootstrap_config_fqn() -> str:
+    cat, sch = _bootstrap_schema()
+    return f"`{cat}`.`{sch}`.{_APP_CONFIG_TABLE}"
+
+
+def list_catalogs() -> list[str]:
+    """Catalogs the app's service principal can see (SHOW CATALOGS)."""
+    out = []
+    for r in _query("SHOW CATALOGS"):
+        val = (r.get("catalog") or r.get("catalog_name")
+               or next(iter(r.values()), None))
+        if val:
+            out.append(val)
+    return sorted(out)
+
+
+def list_schemas(catalog: str) -> list[str]:
+    """Schemas in a catalog (SHOW SCHEMAS IN <catalog>)."""
+    if not catalog:
+        return []
+    out = []
+    for r in _query(f"SHOW SCHEMAS IN `{catalog}`"):
+        val = (r.get("databaseName") or r.get("namespace") or r.get("schema_name")
+               or r.get("database") or next(iter(r.values()), None))
+        if val:
+            out.append(val)
+    return sorted(out)
+
+
+def create_schema(catalog: str, schema: str) -> tuple[bool, str]:
+    """CREATE SCHEMA IF NOT EXISTS. Returns (ok, message); surfaces a clear
+    message when the service principal lacks CREATE SCHEMA on the catalog."""
+    import re
+
+    if not catalog or not schema:
+        return False, "Pick a catalog and enter a schema name."
+    if not re.fullmatch(r"[A-Za-z0-9_]+", schema):
+        return False, "Schema name may contain only letters, numbers, and underscores."
+    for attempt in (1, 2):
+        try:
+            with _get_conn().cursor() as cur:
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
+            return True, f"Schema {catalog}.{schema} is ready."
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            try:
+                if getattr(_local, "conn", None):
+                    _local.conn.close()
+            except Exception:
+                pass
+            _local.conn = None
+            if attempt == 2:
+                up = msg.upper()
+                if "PERMISSION" in up or "PRIVILEGE" in up or "DENIED" in up:
+                    return False, (f"The app can't create schemas in '{catalog}' "
+                                   "(missing CREATE SCHEMA). Pick an existing schema "
+                                   "or ask an admin to grant it.")
+                return False, f"Could not create schema: {msg}"
+    return False, "Could not create schema."
+
+
+def benchmarks_present(catalog: str | None = None, schema: str | None = None) -> bool:
+    """True if the tier/role benchmark table exists and has at least one row."""
+    cat = catalog or config.UC_CATALOG
+    sch = schema or config.UC_SCHEMA
+    return bool(_query(
+        f"SELECT 1 FROM `{cat}`.`{sch}`.gold_challenge_benchmarks LIMIT 1"))
+
+
+def load_app_config() -> dict | None:
+    """Read the {catalog, schema, setup_complete} pointer, or None if unset."""
+    rows = _query(f"SELECT `catalog`, `schema`, `setup_complete` FROM "
+                  f"{_bootstrap_config_fqn()} WHERE `key` = 'active'")
+    if not rows:
+        return None
+    r = rows[0]
+    return {"catalog": r.get("catalog"), "schema": r.get("schema"),
+            "setup_complete": bool(r.get("setup_complete"))}
+
+
+def save_app_config(catalog: str, schema: str, setup_complete: bool) -> bool:
+    """Persist the active-destination pointer at the bootstrap schema."""
+    fq = _bootstrap_config_fqn()
+    for attempt in (1, 2):
+        try:
+            with _get_conn().cursor() as cur:
+                cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS {fq} (`key` STRING, `catalog` STRING, "
+                    "`schema` STRING, `setup_complete` BOOLEAN, `updated_at` TIMESTAMP) "
+                    "USING DELTA")
+                cur.execute(f"DELETE FROM {fq} WHERE `key` = 'active'")
+                cur.execute(
+                    f"INSERT INTO {fq} (`key`, `catalog`, `schema`, `setup_complete`, "
+                    f"`updated_at`) VALUES ('active', {_sql_lit(catalog)}, "
+                    f"{_sql_lit(schema)}, {_sql_lit(bool(setup_complete))}, "
+                    "current_timestamp())")
+            return True
+        except Exception:  # noqa: BLE001
+            try:
+                if getattr(_local, "conn", None):
+                    _local.conn.close()
+            except Exception:
+                pass
+            _local.conn = None
+            if attempt == 2:
+                return False
+    return False
+
+
+def apply_active_destination() -> dict | None:
+    """Read the pointer and repoint config to the selected destination (so reads,
+    writes, and job params all target it). Returns the pointer dict or None."""
+    cfg = load_app_config()
+    if cfg and cfg.get("catalog") and cfg.get("schema"):
+        config.set_destination(cfg["catalog"], cfg["schema"])
+    return cfg
+
+
+def setup_complete() -> bool:
+    """True when the first-run wizard is not needed: a chosen destination is
+    marked complete AND its benchmark table is populated. As a migration for
+    deployments that predate the wizard (or were seeded out of band), a
+    already-seeded bootstrap destination is adopted silently."""
+    cfg = apply_active_destination()
+    if cfg and cfg.get("setup_complete"):
+        return benchmarks_present(cfg["catalog"], cfg["schema"])
+    # No pointer yet: if the deploy-default destination is already seeded, adopt
+    # it so we don't force setup on an already-provisioned deployment.
+    cat, sch = _bootstrap_schema()
+    if benchmarks_present(cat, sch):
+        save_app_config(cat, sch, True)
+        config.set_destination(cat, sch)
+        return True
+    return False
+
+
+def trigger_cohort(catalog: str, schema: str) -> dict:
+    """Run-now the ingest job in cohort mode to seed the tier/role benchmark
+    tables into the chosen destination. Returns {status, run_id}."""
+    job_id = os.environ.get("INGEST_JOB_ID", "")
+    if not job_id:
+        return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
+    params = ["--mode", "cohort", "--catalog", catalog, "--schema", schema]
+    try:
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient()
+        run = w.jobs.run_now(job_id=int(job_id), python_params=params)
+        return {"status": "started", "run_id": run.run_id}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "message": str(exc)}
+
+
+def save_riot_key(key: str) -> tuple[bool, str]:
+    """Write the Riot API key to the league_ai_coach secret scope (the ingest job
+    reads it there). Requires the app SP to have WRITE on the scope."""
+    key = (key or "").strip()
+    if not key:
+        return False, "Enter a Riot API key."
+    try:
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient()
+        w.secrets.put_secret(scope="league_ai_coach", key="riot_api_key",
+                             string_value=key)
+        return True, "Riot API key saved."
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Could not save key: {exc}"
+
+
 def _page_ids(client, puuid, cap, type_, start_time):
     """Paginate match ids up to ``cap`` (match-v5 caps each request at 100)."""
     ids: list[str] = []
@@ -523,10 +712,11 @@ def trigger_refresh(
     if not job_id:
         return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
     # run_now python_params REPLACE the task's defaults, so pass the UC
-    # destination too (kept in sync with the catalog the app reads from).
+    # destination too. Use the runtime config (repointed by the first-run wizard
+    # via apply_active_destination) so job writes follow the chosen destination.
     params = [
-        "--catalog", os.environ.get("UC_CATALOG", config.UC_CATALOG),
-        "--schema", os.environ.get("UC_SCHEMA", config.UC_SCHEMA),
+        "--catalog", config.UC_CATALOG,
+        "--schema", config.UC_SCHEMA,
         "--queue-mode", queue_mode, "--count", str(count),
         "--refresh-mode", refresh_mode,
     ]
@@ -558,8 +748,8 @@ def trigger_backfill(game_name, tag_line, platform, region, count, start_time, q
         return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
     params = [
         "--mode", "summoner",
-        "--catalog", os.environ.get("UC_CATALOG", config.UC_CATALOG),
-        "--schema", os.environ.get("UC_SCHEMA", config.UC_SCHEMA),
+        "--catalog", config.UC_CATALOG,
+        "--schema", config.UC_SCHEMA,
         "--game-name", game_name, "--tag-line", tag_line,
         "--platform", platform, "--region", region,
         "--queue-mode", queue_mode, "--count", str(count),

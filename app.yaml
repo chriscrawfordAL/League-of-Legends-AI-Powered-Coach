@@ -19,9 +19,9 @@ env:
     valueFrom: riot-api-key
   # Unity Catalog destination (plain values, safe to commit).
   - name: UC_CATALOG
-    value: "ccrawford"
+    value: "cmegdemos_catalog"
   - name: UC_SCHEMA
-    value: "league_ai_coach"
+    value: "ccrawford_league_ai_coach"
   - name: BENCHMARK_TIER
     value: "GOLD"
   # Default pull settings (the UI toggles override per refresh).
