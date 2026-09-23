@@ -198,9 +198,6 @@ def _setup_overlay() -> html.Div:
                     style={"display": "none"}, children=html.Div(
         className="setup-card", children=[
             html.Div("First-time setup", className="setup-title"),
-            html.Div("Choose where Abyssal Insight stores its data, then download "
-                     "the tier & role benchmarks it grades players against.",
-                     className="setup-sub"),
             # --- Step 1: destination -------------------------------------------
             html.Div(id="setup-step1", children=[
                 _field("Catalog", dcc.Dropdown(

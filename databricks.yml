@@ -12,7 +12,7 @@ bundle:
 variables:
   warehouse_id:
     description: SQL warehouse id the app queries gold tables through.
-    default: "a3d6bc3533b85843"   # ccrawford_xs
+    default: "f3846cabca43f2d1"   # Serverless Starter (fevm-central1)
   serving_endpoint:
     description: FMAPI chat endpoint name.
     default: databricks-claude-sonnet-4-6
@@ -32,9 +32,9 @@ resources:
             # default pull settings as params (app-triggered runs send their own).
             parameters:
               - "--catalog"
-              - "cmegdemos_catalog"
+              - "fevm_central1"
               - "--schema"
-              - "ccrawford_league_ai_coach"
+              - "league_ai_coach"
               - "--queue-mode"
               - "both"
               - "--count"
@@ -72,6 +72,13 @@ resources:
           job:
             id: ${resources.jobs.ingest_matches.id}
             permission: CAN_MANAGE_RUN
+        # Lakebase (Postgres) instance holding the synced gold-benchmark tables.
+        # Declaring it provisions the app SP a Postgres role + injects PG* env vars.
+        - name: lakebase
+          database:
+            instance_name: league-ai-coach-db
+            database_name: databricks_postgres
+            permission: CAN_CONNECT_AND_CREATE
         - name: riot-api-key
           secret:
             scope: ${var.secret_scope}
@@ -98,9 +105,13 @@ resources:
           - name: RIOT_API_KEY
             value_from: riot-api-key
           - name: UC_CATALOG
-            value: "cmegdemos_catalog"
+            value: "fevm_central1"
           - name: UC_SCHEMA
-            value: "ccrawford_league_ai_coach"
+            value: "league_ai_coach"
+          # Lakebase instance name — used to mint fresh Postgres OAuth tokens at
+          # runtime (the injected PGPASSWORD is short-lived and would go stale).
+          - name: LAKEBASE_INSTANCE
+            value: "league-ai-coach-db"
           - name: BENCHMARK_TIER
             value: "GOLD"
           - name: QUEUE_MODE
@@ -112,3 +123,9 @@ targets:
   dev:
     default: true
     mode: development
+    # NOTE: the default "direct" deployment engine (CLI v1.16.1) panics
+    # (nil-pointer in ResourceApp.OverrideChangeDesc) when planning this app
+    # resource on the FIRST deploy to a fresh workspace. Work around it only for
+    # that initial create by forcing the classic engine:
+    #   DATABRICKS_BUNDLE_ENGINE=terraform databricks bundle deploy -t dev ...
+    # Subsequent updates work on the default engine.

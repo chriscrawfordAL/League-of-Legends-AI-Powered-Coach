@@ -141,7 +141,16 @@ def write_summoner_rows(game_name: str, region: str, rows: list[dict]) -> bool:
 
 
 def load_benchmarks() -> list[dict]:
-    """Return all gold_rank_benchmarks rows ([] if the table doesn't exist yet)."""
+    """Return all gold_rank_benchmarks rows ([] if the table doesn't exist yet).
+
+    Prefers the Lakebase synced online store (low latency, no warehouse cold
+    start); falls back to the SQL warehouse if Lakebase is unavailable.
+    """
+    import lakebase
+
+    rows = lakebase.query(f"SELECT * FROM {lakebase.RANK_SYNCED}")
+    if rows is not None:
+        return rows
     return _query(f"SELECT * FROM {config.GOLD_RANK_BENCHMARKS}")
 
 
@@ -160,11 +169,18 @@ def load_challenge_benchmarks(tier: str | None = None) -> dict:
     table doesn't exist yet.
     """
     tier = tier or config.BENCHMARK_TIER
+    import lakebase
+
+    # Prefer the Lakebase synced online store; fall back to the SQL warehouse.
+    rows = lakebase.query(
+        f"SELECT team_position, metric, gold_avg FROM {lakebase.CHALLENGE_SYNCED} "
+        f"WHERE tier = %s", (tier,))
+    if rows is None:
+        rows = _query(
+            f"SELECT team_position, metric, gold_avg FROM "
+            f"{config.GOLD_CHALLENGE_BENCHMARKS} WHERE tier = '{tier}'")
     out: dict[str, dict] = {}
-    for r in _query(
-        f"SELECT team_position, metric, gold_avg FROM "
-        f"{config.GOLD_CHALLENGE_BENCHMARKS} WHERE tier = '{tier}'"
-    ):
+    for r in rows:
         out.setdefault(r["team_position"], {})[r["metric"]] = r["gold_avg"]
     return out
 

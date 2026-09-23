@@ -13,3 +13,6 @@ venv/
 
 # Databricks
 .databricks/
+
+# Local tooling
+.isaac/

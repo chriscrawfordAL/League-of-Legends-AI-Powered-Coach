@@ -19,9 +19,12 @@ env:
     valueFrom: riot-api-key
   # Unity Catalog destination (plain values, safe to commit).
   - name: UC_CATALOG
-    value: "cmegdemos_catalog"
+    value: "fevm_central1"
   - name: UC_SCHEMA
-    value: "ccrawford_league_ai_coach"
+    value: "league_ai_coach"
+  # Lakebase instance holding the synced gold-benchmark tables (Postgres).
+  - name: LAKEBASE_INSTANCE
+    value: "league-ai-coach-db"
   - name: BENCHMARK_TIER
     value: "GOLD"
   # Default pull settings (the UI toggles override per refresh).
