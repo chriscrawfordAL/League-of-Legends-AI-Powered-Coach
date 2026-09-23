@@ -90,10 +90,26 @@ def _configure_tab() -> html.Div:
                               "value": "force"}],
                     value=[], style={"marginBottom": "12px", "color": "#85A1AD",
                                      "fontSize": "13px"}),
-                html.Button("Initiate Sequence", id="refresh-btn", n_clicks=0, className="ab-btn"),
+                html.Div(style={"display": "flex", "gap": "10px", "justifyContent": "center",
+                                "flexWrap": "wrap"}, children=[
+                    html.Button("Initiate Sequence", id="refresh-btn", n_clicks=0,
+                                className="ab-btn"),
+                    html.Button("☆ Save player", id="save-player-btn", n_clicks=0,
+                                className="ab-btn ab-btn--ghost"),
+                ]),
                 html.Div(id="refresh-status",
                          style={"color": "#85A1AD", "fontSize": "13px", "marginTop": "12px"}),
             ]),
+        ]),
+        # Per-user state (Lakebase): saved players + recent searches.
+        html.Div(className="ab-panel", children=[
+            html.Div("Your Saved Players", className="section-h"),
+            html.Div("Saved to your account — click Load to fill the form, then "
+                     "Initiate. Persists across sessions (stored in Lakebase).",
+                     className="section-sub"),
+            dcc.Loading(html.Div(id="saved-players")),
+            html.Div("Recent Searches", className="section-h"),
+            html.Div(id="recent-searches"),
         ]),
     ])
 
@@ -143,6 +159,8 @@ def serve_layout() -> html.Div:
         dcc.Store(id="nav-store"),        # {seq, target} drives post-Initiate navigation
         dcc.Store(id="cancelled", data=0),  # seq of the most recently cancelled request
         dcc.Store(id="setup-store"),      # first-run wizard state {step, catalog, schema, run_id, status}
+        dcc.Store(id="userstate-refresh", data=0),  # bumped to re-render saved players/searches
+        dcc.Interval(id="us-boot", interval=700, n_intervals=0, max_intervals=1),  # restore prefs on load
         dcc.Interval(id="backfill-poll", interval=15000, n_intervals=0, disabled=True),
         # One-shot boot trigger: fires once on load to decide whether to show the
         # first-run setup wizard. `setup-poll` drives the cohort-seed progress.

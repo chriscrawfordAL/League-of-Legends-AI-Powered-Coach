@@ -117,3 +117,22 @@ def query(sql: str, params: tuple | None = None) -> list[dict] | None:
             if attempt == 2:
                 return None
     return None
+
+
+def execute(sql: str, params: tuple | None = None) -> bool:
+    """Run a write/DDL statement (commit). Returns True on success, False if
+    Lakebase is unavailable or the write fails. Reconnects+retries once."""
+    if not enabled():
+        return False
+    for attempt in (1, 2):
+        try:
+            conn = _get_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+            conn.commit()
+            return True
+        except Exception:  # noqa: BLE001
+            _reset()
+            if attempt == 2:
+                return False
+    return False

@@ -6,10 +6,11 @@ import datetime
 import time
 from urllib.parse import parse_qs, quote
 
-from dash import Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 import config
 import data_access
+import userstate
 from analysis import coach, metrics
 
 
@@ -632,9 +633,138 @@ def register_callbacks(app) -> None:
                          "minutes."),
                 {"display": "none"})
 
+    # ----------------------------------------------------------------------
+    # Per-user state (Lakebase #2): saved players, preferences, recent
+    # searches. Writes go to app-owned Postgres tables keyed by the logged-in
+    # user; all of it degrades gracefully when Lakebase is unavailable.
+    # ----------------------------------------------------------------------
+    @app.callback(
+        Output("saved-players", "children"),
+        Output("recent-searches", "children"),
+        Input("userstate-refresh", "data"),
+        Input("us-boot", "n_intervals"),
+    )
+    def _us_render(_refresh, _boot):
+        return (_saved_players_panel(userstate.list_saved_players()),
+                _recent_searches_panel(userstate.recent_searches()))
+
+    @app.callback(
+        Output("userstate-refresh", "data", allow_duplicate=True),
+        Input("save-player-btn", "n_clicks"),
+        State("riot-id-input", "value"),
+        State("region-input", "value"),
+        State("userstate-refresh", "data"),
+        prevent_initial_call=True,
+    )
+    def _us_save_player(_n, riot_id, region, cur):
+        if riot_id and region:
+            userstate.save_player(riot_id, region)
+        return (cur or 0) + 1
+
+    @app.callback(
+        Output("userstate-refresh", "data", allow_duplicate=True),
+        Input({"type": "us-remove", "rid": ALL, "reg": ALL}, "n_clicks"),
+        State("userstate-refresh", "data"),
+        prevent_initial_call=True,
+    )
+    def _us_remove_player(clicks, cur):
+        t = ctx.triggered_id
+        if t and any(c for c in clicks if c):
+            userstate.remove_player(t["rid"], t["reg"])
+        return (cur or 0) + 1
+
+    # Clicking a saved player / recent search fills the Configure inputs.
+    @app.callback(
+        Output("riot-id-input", "value"),
+        Output("region-input", "value"),
+        Input({"type": "us-load", "rid": ALL, "reg": ALL, "src": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _us_load(clicks):
+        t = ctx.triggered_id
+        if not t or not any(c for c in clicks if c):
+            return no_update, no_update
+        return t["rid"], t["reg"]
+
+    # On Initiate: remember the settings and record the search.
+    @app.callback(
+        Output("userstate-refresh", "data", allow_duplicate=True),
+        Input("refresh-btn", "n_clicks"),
+        State("riot-id-input", "value"),
+        State("region-input", "value"),
+        State("role-dropdown", "value"),
+        State("tier-dropdown", "value"),
+        State("queue-dropdown", "value"),
+        State("timeframe-dropdown", "value"),
+        State("count-input", "value"),
+        State("userstate-refresh", "data"),
+        prevent_initial_call=True,
+    )
+    def _us_on_initiate(_n, riot_id, region, role, tier, queue, tf, cnt, cur):
+        if riot_id and region:
+            userstate.add_search(riot_id, region)
+        userstate.save_prefs(role=role, tier=tier, queue=queue,
+                             timeframe=tf, sample_count=cnt)
+        return (cur or 0) + 1
+
+    # On load: restore the user's last-used settings into the Configure form.
+    @app.callback(
+        Output("role-dropdown", "value"),
+        Output("tier-dropdown", "value"),
+        Output("queue-dropdown", "value"),
+        Output("timeframe-dropdown", "value"),
+        Output("count-input", "value"),
+        Input("us-boot", "n_intervals"),
+        prevent_initial_call=True,
+    )
+    def _us_restore_prefs(_n):
+        p = userstate.get_prefs()
+        if not p:
+            return (no_update,) * 5
+        def _v(x):
+            return x if x not in (None, "") else no_update
+        return (_v(p.get("role")), _v(p.get("tier")), _v(p.get("queue")),
+                _v(p.get("timeframe")), _v(p.get("sample_count")))
+
 # --------------------------------------------------------------------------
 # Render helpers (Abyssal Insight styling)
 # --------------------------------------------------------------------------
+_MUTED = {"color": "#85A1AD", "fontSize": "13px"}
+_GHOST_SM = {"padding": "6px 14px", "fontSize": "12px"}
+
+
+def _saved_players_panel(players):
+    if not players:
+        return html.Div("No saved players yet — enter a Riot ID + Region above and "
+                        "click ☆ Save player.", style=_MUTED)
+    rows = []
+    for p in players:
+        rid, reg = p.get("riot_id"), p.get("region")
+        rows.append(html.Div(style={
+            "display": "flex", "alignItems": "center", "gap": "10px", "padding": "8px 0",
+            "borderBottom": "1px solid rgba(26,77,71,0.35)"}, children=[
+                html.Span(f"{rid} #{reg}",
+                          style={"flex": "1", "color": "#DEE9ED", "fontSize": "14px"}),
+                html.Button("Load", n_clicks=0, className="ab-btn--ghost", style=_GHOST_SM,
+                            id={"type": "us-load", "rid": rid, "reg": reg, "src": "saved"}),
+                html.Button("✕", n_clicks=0, className="ab-btn--ghost",
+                            style={"padding": "6px 12px", "fontSize": "12px"},
+                            id={"type": "us-remove", "rid": rid, "reg": reg}),
+            ]))
+    return html.Div(rows)
+
+
+def _recent_searches_panel(items):
+    if not items:
+        return html.Div("No recent searches.", style=_MUTED)
+    chips = [html.Button(
+        f"{i.get('riot_id')} #{i.get('region')}", n_clicks=0, className="ab-btn--ghost",
+        style=_GHOST_SM,
+        id={"type": "us-load", "rid": i.get("riot_id"), "reg": i.get("region"), "src": "recent"})
+        for i in items]
+    return html.Div(chips, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})
+
+
 def _banner_loading(rid, shown, total):
     return html.Div(className="backfill-banner loading", children=[
         html.Span("⏳ ", style={"marginRight": "6px"}),
