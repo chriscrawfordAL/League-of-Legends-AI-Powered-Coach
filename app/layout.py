@@ -110,6 +110,10 @@ def _configure_tab() -> html.Div:
             dcc.Loading(html.Div(id="saved-players")),
             html.Div("Recent Searches", className="section-h"),
             html.Div(id="recent-searches"),
+            html.Div("Recent Data Refreshes", className="section-h"),
+            html.Div("Ingestion runs you've triggered (setup seed, refresh, "
+                     "backfill), tracked in Lakebase.", className="section-sub"),
+            html.Div(id="recent-runs"),
         ]),
     ])
 

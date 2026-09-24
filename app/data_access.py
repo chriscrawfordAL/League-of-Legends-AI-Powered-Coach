@@ -12,6 +12,7 @@ import threading
 from itertools import zip_longest
 
 import config
+import userstate
 
 # Synchronous in-app fetch ceiling. The Databricks Apps proxy times out a request
 # at 120s and a dev Riot key allows ~100 requests / 2 min, so we keep each live
@@ -187,26 +188,17 @@ def load_challenge_benchmarks(tier: str | None = None) -> dict:
 
 # ---------------------------------------------------------------------------
 # First-run setup: catalog/schema selection, pointer persistence, seeding.
-# The app is provisioned per-deploy. A small pointer table (_app_config) kept at
-# the BOOTSTRAP destination (the deploy-default UC_CATALOG.UC_SCHEMA from env,
-# which always exists) records the catalog/schema the user chose in the wizard
-# plus whether the tier/role benchmark seed has completed. The wizard seeds the
-# benchmark tables by triggering the ingest job in cohort mode.
+# The active-destination pointer (which catalog/schema the wizard chose + whether
+# the benchmark seed completed) lives in Lakebase Postgres (see userstate); the
+# wizard seeds the benchmark tables by triggering the ingest job in cohort mode.
 # ---------------------------------------------------------------------------
-
-_APP_CONFIG_TABLE = "_app_config"
 
 
 def _bootstrap_schema() -> tuple[str, str]:
-    """The fixed (catalog, schema) holding the _app_config pointer — the deploy
-    default from env, created at deploy time so it always exists."""
+    """The deploy-default (catalog, schema) from env — used as the adopt target
+    when no pointer exists yet (a pre-seeded deployment)."""
     return (os.environ.get("UC_CATALOG", config.UC_CATALOG),
             os.environ.get("UC_SCHEMA", config.UC_SCHEMA))
-
-
-def _bootstrap_config_fqn() -> str:
-    cat, sch = _bootstrap_schema()
-    return f"`{cat}`.`{sch}`.{_APP_CONFIG_TABLE}"
 
 
 def list_catalogs() -> list[str]:
@@ -274,43 +266,13 @@ def benchmarks_present(catalog: str | None = None, schema: str | None = None) ->
 
 
 def load_app_config() -> dict | None:
-    """Read the {catalog, schema, setup_complete} pointer, or None if unset."""
-    rows = _query(f"SELECT `catalog`, `schema`, `setup_complete` FROM "
-                  f"{_bootstrap_config_fqn()} WHERE `key` = 'active'")
-    if not rows:
-        return None
-    r = rows[0]
-    return {"catalog": r.get("catalog"), "schema": r.get("schema"),
-            "setup_complete": bool(r.get("setup_complete"))}
+    """Read the {catalog, schema, setup_complete} pointer from Lakebase, or None."""
+    return userstate.get_config()
 
 
 def save_app_config(catalog: str, schema: str, setup_complete: bool) -> bool:
-    """Persist the active-destination pointer at the bootstrap schema."""
-    fq = _bootstrap_config_fqn()
-    for attempt in (1, 2):
-        try:
-            with _get_conn().cursor() as cur:
-                cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS {fq} (`key` STRING, `catalog` STRING, "
-                    "`schema` STRING, `setup_complete` BOOLEAN, `updated_at` TIMESTAMP) "
-                    "USING DELTA")
-                cur.execute(f"DELETE FROM {fq} WHERE `key` = 'active'")
-                cur.execute(
-                    f"INSERT INTO {fq} (`key`, `catalog`, `schema`, `setup_complete`, "
-                    f"`updated_at`) VALUES ('active', {_sql_lit(catalog)}, "
-                    f"{_sql_lit(schema)}, {_sql_lit(bool(setup_complete))}, "
-                    "current_timestamp())")
-            return True
-        except Exception:  # noqa: BLE001
-            try:
-                if getattr(_local, "conn", None):
-                    _local.conn.close()
-            except Exception:
-                pass
-            _local.conn = None
-            if attempt == 2:
-                return False
-    return False
+    """Persist the active-destination pointer in Lakebase Postgres."""
+    return userstate.set_config(catalog, schema, setup_complete)
 
 
 def apply_active_destination() -> dict | None:
@@ -352,6 +314,7 @@ def trigger_cohort(catalog: str, schema: str) -> dict:
 
         w = WorkspaceClient()
         run = w.jobs.run_now(job_id=int(job_id), python_params=params)
+        userstate.log_job_run(run.run_id, "cohort seed", catalog, schema)
         return {"status": "started", "run_id": run.run_id}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "message": str(exc)}
@@ -751,6 +714,7 @@ def trigger_refresh(
 
         w = WorkspaceClient()
         run = w.jobs.run_now(job_id=int(job_id), python_params=params)
+        userstate.log_job_run(run.run_id, "refresh", config.UC_CATALOG, config.UC_SCHEMA)
         return {"status": "started", "run_id": run.run_id}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
@@ -777,6 +741,7 @@ def trigger_backfill(game_name, tag_line, platform, region, count, start_time, q
 
         w = WorkspaceClient()
         run = w.jobs.run_now(job_id=int(job_id), python_params=params)
+        userstate.log_job_run(run.run_id, "backfill", config.UC_CATALOG, config.UC_SCHEMA)
         return {"status": "started", "run_id": run.run_id}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "message": str(exc)}
@@ -795,6 +760,9 @@ def job_run_status(run_id) -> dict:
         life = str(state.life_cycle_state) if state and state.life_cycle_state else ""
         result = str(state.result_state) if state and state.result_state else ""
         # Enum reprs look like "RunLifeCycleState.TERMINATED"; keep the tail.
-        return {"life": life.split(".")[-1], "result": result.split(".")[-1]}
+        life, result = life.split(".")[-1], result.split(".")[-1]
+        # Record a readable status in the job-run history (result once terminal).
+        userstate.update_job_run(run_id, result or life or "RUNNING")
+        return {"life": life, "result": result}
     except Exception as exc:  # noqa: BLE001
         return {"life": "", "result": "", "error": str(exc)}

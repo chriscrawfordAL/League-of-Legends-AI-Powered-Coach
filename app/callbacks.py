@@ -641,12 +641,14 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output("saved-players", "children"),
         Output("recent-searches", "children"),
+        Output("recent-runs", "children"),
         Input("userstate-refresh", "data"),
         Input("us-boot", "n_intervals"),
     )
     def _us_render(_refresh, _boot):
         return (_saved_players_panel(userstate.list_saved_players()),
-                _recent_searches_panel(userstate.recent_searches()))
+                _recent_searches_panel(userstate.recent_searches()),
+                _recent_runs_panel(userstate.recent_job_runs()))
 
     @app.callback(
         Output("userstate-refresh", "data", allow_duplicate=True),
@@ -763,6 +765,36 @@ def _recent_searches_panel(items):
         id={"type": "us-load", "rid": i.get("riot_id"), "reg": i.get("region"), "src": "recent"})
         for i in items]
     return html.Div(chips, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})
+
+
+def _run_status_color(status):
+    s = (status or "").upper()
+    if s == "SUCCESS":
+        return "#1ae6ce"
+    if s in ("FAILED", "TIMEDOUT", "CANCELED", "INTERNAL_ERROR"):
+        return "#ff6b6b"
+    return "#e6c01a"  # RUNNING / pending
+
+
+def _recent_runs_panel(runs):
+    if not runs:
+        return html.Div("No ingestion runs yet.", style=_MUTED)
+    rows = []
+    for r in runs:
+        ts = r.get("started_at")
+        when = ts.strftime("%b %d %H:%M") if hasattr(ts, "strftime") else str(ts or "")
+        rows.append(html.Div(style={
+            "display": "flex", "alignItems": "center", "gap": "10px", "padding": "6px 0",
+            "borderBottom": "1px solid rgba(26,77,71,0.35)", "fontSize": "13px"}, children=[
+                html.Span(r.get("kind", "run"),
+                          style={"flex": "1", "color": "#DEE9ED", "fontWeight": "600"}),
+                html.Span(str(r.get("status") or ""),
+                          style={"color": _run_status_color(r.get("status")),
+                                 "fontWeight": "600"}),
+                html.Span(when, style={"color": "#85A1AD", "minWidth": "96px",
+                                       "textAlign": "right"}),
+            ]))
+    return html.Div(rows)
 
 
 def _banner_loading(rid, shown, total):

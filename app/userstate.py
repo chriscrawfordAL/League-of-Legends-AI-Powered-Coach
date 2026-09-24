@@ -34,6 +34,16 @@ _DDL = [
     f"""CREATE TABLE IF NOT EXISTS {_SCHEMA}.search_history (
         id bigserial PRIMARY KEY, user_id text NOT NULL, riot_id text NOT NULL,
         region text NOT NULL, searched_at timestamptz NOT NULL DEFAULT now())""",
+    # App config (the first-run wizard's active-destination pointer, moved off
+    # the Delta/warehouse table into Postgres) + ingestion job-run history.
+    f"""CREATE TABLE IF NOT EXISTS {_SCHEMA}.app_config (
+        key text PRIMARY KEY, catalog_name text, schema_name text,
+        setup_complete boolean, updated_at timestamptz NOT NULL DEFAULT now())""",
+    f"""CREATE TABLE IF NOT EXISTS {_SCHEMA}.job_runs (
+        run_id bigint PRIMARY KEY, kind text, catalog_name text, schema_name text,
+        status text, started_by text,
+        started_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now())""",
 ]
 
 
@@ -132,3 +142,61 @@ def recent_searches(limit: int = 5) -> list[dict]:
         f"FROM {_SCHEMA}.search_history WHERE user_id=%s "
         "GROUP BY riot_id, region ORDER BY last_at DESC LIMIT %s",
         (current_user(), int(limit))) or []
+
+
+# --- App config pointer (first-run wizard destination) -------------------
+def get_config() -> dict | None:
+    """The active-destination pointer {catalog, schema, setup_complete}, or None."""
+    if not _ensure():
+        return None
+    rows = lakebase.query(
+        f"SELECT catalog_name AS catalog, schema_name AS schema, setup_complete "
+        f"FROM {_SCHEMA}.app_config WHERE key='active'")
+    if not rows:
+        return None
+    r = rows[0]
+    return {"catalog": r.get("catalog"), "schema": r.get("schema"),
+            "setup_complete": bool(r.get("setup_complete"))}
+
+
+def set_config(catalog: str, schema: str, setup_complete: bool) -> bool:
+    if not _ensure():
+        return False
+    return lakebase.execute(
+        f"INSERT INTO {_SCHEMA}.app_config "
+        "(key, catalog_name, schema_name, setup_complete, updated_at) "
+        "VALUES ('active', %s, %s, %s, now()) "
+        "ON CONFLICT (key) DO UPDATE SET catalog_name=EXCLUDED.catalog_name, "
+        "schema_name=EXCLUDED.schema_name, setup_complete=EXCLUDED.setup_complete, "
+        "updated_at=now()",
+        (catalog, schema, bool(setup_complete)))
+
+
+# --- Ingestion job-run history -------------------------------------------
+def log_job_run(run_id, kind: str, catalog: str | None = None,
+                schema: str | None = None, status: str = "RUNNING") -> bool:
+    if not run_id or not _ensure():
+        return False
+    return lakebase.execute(
+        f"INSERT INTO {_SCHEMA}.job_runs "
+        "(run_id, kind, catalog_name, schema_name, status, started_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s) "
+        "ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, updated_at=now()",
+        (int(run_id), kind, catalog, schema, status, current_user()))
+
+
+def update_job_run(run_id, status: str) -> bool:
+    if not run_id or not _ensure():
+        return False
+    return lakebase.execute(
+        f"UPDATE {_SCHEMA}.job_runs SET status=%s, updated_at=now() WHERE run_id=%s",
+        (status, int(run_id)))
+
+
+def recent_job_runs(limit: int = 5) -> list[dict]:
+    if not _ensure():
+        return []
+    return lakebase.query(
+        f"SELECT run_id, kind, status, started_by, started_at "
+        f"FROM {_SCHEMA}.job_runs ORDER BY started_at DESC LIMIT %s",
+        (int(limit),)) or []
