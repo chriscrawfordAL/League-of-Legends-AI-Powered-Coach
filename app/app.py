@@ -55,6 +55,21 @@ def _apply_saved_destination():
 
 _apply_saved_destination()
 
+
+def _wire_llm_cache():
+    """Back the coaching-narrative cache with the durable, shared Lakebase store
+    (L2) so responses survive restarts and are shared across app instances."""
+    try:
+        import userstate
+        from analysis import coach
+
+        coach.set_cache_backend(userstate.llm_cache_get, userstate.llm_cache_put)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[LLM-CACHE] could not wire Lakebase cache: {exc!r}", flush=True)
+
+
+_wire_llm_cache()
+
 app = dash.Dash(__name__, title="Abyssal Insight", update_title=None)
 app.layout = serve_layout
 register_callbacks(app)

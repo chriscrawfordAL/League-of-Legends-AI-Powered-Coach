@@ -19,21 +19,53 @@ from .metrics import MetricComparison
 # In-process cache for FMAPI responses (#7). The narrative for a given
 # (player window, role, tier) is deterministic enough to reuse across re-renders
 # — toggling the role/tier or re-opening a tab no longer re-bills the endpoint.
-# Bounded LRU-ish; lost on app restart, which is fine.
+# Bounded LRU-ish; a fast L1 in front of the optional durable L2 below.
 _LLM_CACHE: dict[str, str] = {}
 _LLM_CACHE_ORDER: list[str] = []
 _LLM_CACHE_MAX = 256
 
+# Optional durable, shared L2 cache (Lakebase). The app registers a (get, put)
+# backend via set_cache_backend() at startup; when unset (tests, no Lakebase),
+# only the in-process L1 is used. Kept as injected callables so this analysis
+# module stays decoupled from the app's data layer.
+_ext_get = None
+_ext_put = None
+
+
+def set_cache_backend(get_fn, put_fn) -> None:
+    """Register a durable L2 cache: get_fn(key)->str|None, put_fn(key, value)."""
+    global _ext_get, _ext_put
+    _ext_get, _ext_put = get_fn, put_fn
+
+
+def _l1_store(key: str, out: str) -> None:
+    _LLM_CACHE[key] = out
+    _LLM_CACHE_ORDER.append(key)
+    if len(_LLM_CACHE_ORDER) > _LLM_CACHE_MAX:
+        _LLM_CACHE.pop(_LLM_CACHE_ORDER.pop(0), None)
+
 
 def _chat(endpoint: str, system: str, user: str, max_tokens: int,
           temperature: float = 0.3) -> str:
-    """Query the FMAPI chat endpoint, caching on the exact prompt + params."""
+    """Query the FMAPI chat endpoint, caching on the exact prompt + params.
+
+    Checks the in-process L1 cache, then the durable shared L2 (Lakebase, if
+    registered), then the endpoint — populating both caches on a miss.
+    """
     key = hashlib.sha256(
         f"{endpoint}\x00{max_tokens}\x00{temperature}\x00{system}\x00{user}".encode()
     ).hexdigest()
     cached = _LLM_CACHE.get(key)
     if cached is not None:
         return cached
+    if _ext_get is not None:
+        try:
+            hit = _ext_get(key)
+        except Exception:  # noqa: BLE001 — cache must never break inference
+            hit = None
+        if hit is not None:
+            _l1_store(key, hit)
+            return hit
 
     from databricks.sdk import WorkspaceClient
     from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
@@ -49,10 +81,12 @@ def _chat(endpoint: str, system: str, user: str, max_tokens: int,
         max_tokens=max_tokens,
     )
     out = resp.choices[0].message.content
-    _LLM_CACHE[key] = out
-    _LLM_CACHE_ORDER.append(key)
-    if len(_LLM_CACHE_ORDER) > _LLM_CACHE_MAX:
-        _LLM_CACHE.pop(_LLM_CACHE_ORDER.pop(0), None)
+    _l1_store(key, out)
+    if _ext_put is not None:
+        try:
+            _ext_put(key, out)
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 SYSTEM_PROMPT = (

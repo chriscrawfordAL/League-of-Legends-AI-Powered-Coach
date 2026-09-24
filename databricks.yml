@@ -16,43 +16,46 @@ variables:
   serving_endpoint:
     description: FMAPI chat endpoint name.
     default: databricks-claude-sonnet-4-6
+  mas_endpoint:
+    description: Multi-Agent Supervisor endpoint (data-assistant chatbot).
+    default: mas-9833b08b-endpoint
   secret_scope:
     description: Secret scope holding the Riot API key.
     default: league_ai_coach
 
 resources:
+  pipelines:
+    # Spark Declarative Pipeline that rebuilds the tier/role benchmark medallion
+    # (bronze cohort matches from Riot -> silver participants/ranks -> gold
+    # benchmarks). Serverless; publishes to fevm_central1.league_ai_coach so the
+    # table names match what the app / Lakebase synced tables / Genie agents read.
+    benchmarks_pipeline:
+      name: league-ai-coach-benchmarks
+      catalog: fevm_central1
+      schema: league_ai_coach
+      serverless: true
+      libraries:
+        - file:
+            path: pipelines/benchmarks.py
+      configuration:
+        league.tiers: "IRON,BRONZE,SILVER,GOLD,PLATINUM,EMERALD,DIAMOND"
+        league.sample_size: "25"
+        league.matches_per_player: "4"
+
   jobs:
     ingest_matches:
       name: league-ai-coach-ingest
+      # A Lakeflow job whose task runs the Spark Declarative Pipeline above.
       tasks:
-        - task_key: ingest
-          spark_python_task:
-            python_file: jobs/ingest_matches.py
-            # Serverless tasks can't take env vars; pass the UC destination +
-            # default pull settings as params (app-triggered runs send their own).
-            parameters:
-              - "--catalog"
-              - "fevm_central1"
-              - "--schema"
-              - "league_ai_coach"
-              - "--queue-mode"
-              - "both"
-              - "--count"
-              - "25"
-          environment_key: default
-      environments:
-        - environment_key: default
-          spec:
-            client: "2"
-            dependencies:
-              - requests>=2.32.0
-      # Scheduled ingestion (also triggerable on demand by the app). Paused:
-      # the dev Riot key expires every 24h, so we run on-demand via the app's
-      # Refresh button. Flip to UNPAUSED once a non-expiring (prod) key is set.
+        - task_key: refresh_benchmarks
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.benchmarks_pipeline.id}
+      # Weekly refresh, every Sunday 06:00 PT. (The dev Riot key expires every 24h,
+      # so a scheduled run needs a non-expiring prod/personal key to succeed.)
       schedule:
-        quartz_cron_expression: "0 0 */6 * * ?"  # every 6 hours
+        quartz_cron_expression: "0 0 6 ? * SUN"
         timezone_id: America/Los_Angeles
-        pause_status: PAUSED
+        pause_status: UNPAUSED
 
   apps:
     league_ai_coach:
@@ -67,6 +70,11 @@ resources:
         - name: serving-endpoint
           serving_endpoint:
             name: ${var.serving_endpoint}
+            permission: CAN_QUERY
+        # Multi-Agent Supervisor endpoint the data-assistant chatbot queries.
+        - name: mas-endpoint
+          serving_endpoint:
+            name: ${var.mas_endpoint}
             permission: CAN_QUERY
         - name: ingest-job
           job:
@@ -112,6 +120,8 @@ resources:
           # runtime (the injected PGPASSWORD is short-lived and would go stale).
           - name: LAKEBASE_INSTANCE
             value: "league-ai-coach-db"
+          - name: MAS_ENDPOINT
+            value: "mas-9833b08b-endpoint"
           - name: BENCHMARK_TIER
             value: "GOLD"
           - name: QUEUE_MODE

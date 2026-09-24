@@ -14,6 +14,7 @@ no-op writes), so the app is fully functional without it.
 from __future__ import annotations
 
 import threading
+import time
 
 import lakebase
 
@@ -44,7 +45,19 @@ _DDL = [
         status text, started_by text,
         started_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now())""",
+    # Riot API usage counter (per fixed time window) — a shared, atomic counter
+    # so the app can meter usage against the dev key's rate-limit budget across
+    # requests and instances. Plus a durable, shared FMAPI response cache.
+    f"""CREATE TABLE IF NOT EXISTS {_SCHEMA}.api_usage (
+        window_start bigint PRIMARY KEY, calls int NOT NULL DEFAULT 0)""",
+    f"""CREATE TABLE IF NOT EXISTS {_SCHEMA}.llm_cache (
+        cache_key text PRIMARY KEY, response text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now())""",
 ]
+
+# Riot dev-key budget: ~100 requests / 2 minutes (the binding limit for the app).
+RIOT_WINDOW_SECONDS = 120
+RIOT_WINDOW_LIMIT = 100
 
 
 def _ensure() -> bool:
@@ -200,3 +213,54 @@ def recent_job_runs(limit: int = 5) -> list[dict]:
         f"SELECT run_id, kind, status, started_by, started_at "
         f"FROM {_SCHEMA}.job_runs ORDER BY started_at DESC LIMIT %s",
         (int(limit),)) or []
+
+
+# --- Riot API rate-limit / usage counter ---------------------------------
+def _window_start(now: float | None = None) -> int:
+    now = now if now is not None else time.time()
+    return int(now // RIOT_WINDOW_SECONDS) * RIOT_WINDOW_SECONDS
+
+
+def record_api_calls(n: int = 1) -> bool:
+    """Atomically add ``n`` Riot API calls to the current window's counter."""
+    if n <= 0 or not _ensure():
+        return False
+    return lakebase.execute(
+        f"INSERT INTO {_SCHEMA}.api_usage (window_start, calls) VALUES (%s, %s) "
+        "ON CONFLICT (window_start) DO UPDATE SET "
+        f"calls = {_SCHEMA}.api_usage.calls + EXCLUDED.calls",
+        (_window_start(), int(n)))
+
+
+def api_usage_now() -> dict:
+    """Current-window Riot usage: {used, limit, remaining, resets_in, window_seconds}."""
+    now = time.time()
+    ws = _window_start(now)
+    used = 0
+    if _ensure():
+        rows = lakebase.query(
+            f"SELECT calls FROM {_SCHEMA}.api_usage WHERE window_start=%s", (ws,))
+        if rows:
+            used = int(rows[0].get("calls") or 0)
+    return {"used": used, "limit": RIOT_WINDOW_LIMIT,
+            "remaining": max(0, RIOT_WINDOW_LIMIT - used),
+            "resets_in": int(ws + RIOT_WINDOW_SECONDS - now),
+            "window_seconds": RIOT_WINDOW_SECONDS}
+
+
+# --- Durable, shared FMAPI response cache --------------------------------
+def llm_cache_get(key: str) -> str | None:
+    if not _ensure():
+        return None
+    rows = lakebase.query(
+        f"SELECT response FROM {_SCHEMA}.llm_cache WHERE cache_key=%s", (key,))
+    return rows[0].get("response") if rows else None
+
+
+def llm_cache_put(key: str, value: str) -> bool:
+    if value is None or not _ensure():
+        return False
+    return lakebase.execute(
+        f"INSERT INTO {_SCHEMA}.llm_cache (cache_key, response) VALUES (%s, %s) "
+        "ON CONFLICT (cache_key) DO UPDATE SET response=EXCLUDED.response, "
+        "created_at=now()", (key, value))

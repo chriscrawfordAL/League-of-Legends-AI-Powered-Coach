@@ -377,6 +377,71 @@ body.light .dash-spreadsheet-container .dash-header {
 }
 .ab-btn--ghost:hover { background: rgba(26,230,206,0.10); box-shadow: none; transform: none; }
 
+/* Data-assistant chatbot (lower-left launcher + panel). */
+.chat-launcher {
+  position: fixed; left: 22px; bottom: 22px; z-index: 10001;
+  width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--teal), var(--teal-dim));
+  color: #04161c; font-size: 24px; line-height: 56px; text-align: center;
+  box-shadow: 0 6px 24px rgba(26,230,206,0.4); transition: transform .1s;
+}
+.chat-launcher:hover { transform: translateY(-2px); }
+.chat-panel {
+  position: fixed; left: 22px; bottom: 22px; z-index: 10001;
+  width: min(380px, calc(100vw - 32px)); height: min(560px, calc(100vh - 44px));
+  display: flex; flex-direction: column; border-radius: 16px; overflow: hidden;
+  background: var(--panel-solid); border: 1px solid var(--border-soft);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+}
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.chat-title {
+  font-family: "Cinzel", serif; color: var(--teal); font-weight: 700;
+  letter-spacing: 0.08em; font-size: 15px;
+}
+.chat-close {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font-size: 16px; padding: 2px 8px;
+}
+.chat-close:hover { color: var(--bad); }
+.chat-log {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.chat-msg {
+  max-width: 85%; padding: 9px 13px; border-radius: 12px; font-size: 13px;
+  line-height: 1.5; word-wrap: break-word;
+}
+.chat-msg.user {
+  align-self: flex-end; background: rgba(26,230,206,0.16); color: var(--text);
+  border: 1px solid var(--border-soft);
+}
+.chat-msg.bot {
+  align-self: flex-start; background: rgba(255,255,255,0.03); color: var(--text);
+  border: 1px solid var(--border-soft);
+}
+.chat-msg.bot table { border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+.chat-msg.bot th, .chat-msg.bot td {
+  border: 1px solid var(--border-soft); padding: 3px 8px; text-align: left;
+}
+.chat-thinking { color: var(--teal); font-size: 13px; padding: 10px 16px; }
+.chat-inputrow {
+  display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border-soft);
+}
+.chat-input {
+  flex: 1; background: rgba(255,255,255,0.03); color: var(--text);
+  border: 1px solid var(--border-soft); border-radius: 8px; padding: 9px 12px;
+  font-size: 13px; font-family: "Inter", sans-serif;
+}
+.chat-input:focus { border-color: var(--teal); outline: none; }
+.chat-send {
+  background: linear-gradient(135deg, var(--teal), var(--teal-dim)); color: #04161c;
+  border: none; border-radius: 8px; padding: 9px 18px; cursor: pointer;
+  font-weight: 700; font-size: 13px; font-family: "Cinzel", serif;
+}
+
 /* Macro/Game Analysis link styling is shared with .item-link (see Itemization page). */
 .macro-team-card {
   flex: 1; min-width: 280px; padding: 16px 18px; border-radius: 12px;

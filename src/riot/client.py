@@ -51,12 +51,16 @@ class RiotClient:
         self._max_429_wait = max_429_wait
         self._session = requests.Session()
         self._session.headers.update({"X-Riot-Token": api_key})
+        # Count of HTTP requests actually sent to Riot (all attempts, incl. 429s),
+        # so callers can meter usage against the key's rate-limit budget.
+        self.request_count = 0
 
     # -- low-level ---------------------------------------------------------
     def _get(self, host: str, path: str, params: dict | None = None) -> Any:
         url = f"https://{host}.api.riotgames.com{path}"
         for attempt in range(self._max_retries + 1):
             self._rl.acquire()
+            self.request_count += 1
             resp = self._session.get(url, params=params, timeout=self._timeout)
             if resp.status_code == 200:
                 return resp.json()

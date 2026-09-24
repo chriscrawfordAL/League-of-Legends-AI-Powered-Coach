@@ -260,6 +260,55 @@ def ingest_cohort(
     return {"sampled_players": len(sampled), "new_matches": len(new_bronze)}
 
 
+def fetch_cohort_rows(client, tiers, sample_size: int = 25,
+                      matches_per_player: int = 4, seed: int = 13) -> list[dict]:
+    """Pure cohort fetch for the declarative pipeline — no Spark, no writes.
+
+    For each tier: sample ``sample_size`` ranked players via league-v4, pull their
+    recent ranked matches, and return bronze rows tagged with the sampled player's
+    puuid + KNOWN tier. Tagging the cohort tier on each row lets the pipeline derive
+    silver_player_ranks straight from bronze (no per-participant rank lookups).
+    """
+    rng = random.Random(seed)
+    queue = 420  # ranked Solo/Duo — clean per-tier signal
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for tier in tiers:
+        candidates: dict[str, dict] = {}
+        for division in DIVISIONS:
+            try:
+                for entry in client.get_league_entries_by_tier(tier, division, page=1):
+                    p = entry.get("puuid")
+                    if p:
+                        candidates[p] = entry
+            except RiotAPIError:
+                continue
+        if not candidates:
+            continue
+        sampled = rng.sample(list(candidates), k=min(sample_size, len(candidates)))
+        for puuid in sampled:
+            try:
+                ids = client.get_match_ids(puuid, count=matches_per_player, queue=queue)
+            except RiotAPIError:
+                continue
+            for mid in ids:
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                try:
+                    match = client.get_match(mid)
+                except RiotAPIError:
+                    continue
+                rows.append({
+                    "match_id": mid,
+                    "cohort_puuid": puuid,
+                    "cohort_tier": tier,
+                    "ingested_at": int(time.time()),
+                    "payload": json.dumps(match),
+                })
+    return rows
+
+
 def build_silver(spark) -> None:
     """Flatten bronze match payloads into one row per participant.
 

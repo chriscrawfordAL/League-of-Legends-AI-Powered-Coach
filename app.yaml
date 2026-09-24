@@ -25,6 +25,9 @@ env:
   # Lakebase instance holding the synced gold-benchmark tables (Postgres).
   - name: LAKEBASE_INSTANCE
     value: "league-ai-coach-db"
+  # Multi-Agent Supervisor endpoint the data-assistant chatbot queries.
+  - name: MAS_ENDPOINT
+    value: "mas-9833b08b-endpoint"
   - name: BENCHMARK_TIER
     value: "GOLD"
   # Default pull settings (the UI toggles override per refresh).

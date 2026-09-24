@@ -303,18 +303,19 @@ def setup_complete() -> bool:
 
 
 def trigger_cohort(catalog: str, schema: str) -> dict:
-    """Run-now the ingest job in cohort mode to seed the tier/role benchmark
-    tables into the chosen destination. Returns {status, run_id}."""
+    """Run-now the ingest job, which runs the benchmark Spark Declarative Pipeline
+    (bronze cohort -> silver -> gold benchmarks). The pipeline's catalog/schema and
+    cohort settings are fixed on the pipeline resource, so no per-run params are
+    passed. Returns {status, run_id}."""
     job_id = os.environ.get("INGEST_JOB_ID", "")
     if not job_id:
         return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
-    params = ["--mode", "cohort", "--catalog", catalog, "--schema", schema]
     try:
         from databricks.sdk import WorkspaceClient
 
         w = WorkspaceClient()
-        run = w.jobs.run_now(job_id=int(job_id), python_params=params)
-        userstate.log_job_run(run.run_id, "cohort seed", catalog, schema)
+        run = w.jobs.run_now(job_id=int(job_id))
+        userstate.log_job_run(run.run_id, "benchmark refresh", catalog, schema)
         return {"status": "started", "run_id": run.run_id}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "message": str(exc)}
@@ -364,6 +365,14 @@ def fetch_player_live(game_name, tag_line, platform, region, count, start_time, 
     key = os.environ.get("RIOT_API_KEY", "")
     if not key:
         return [], "No Riot API key configured on the app.", None
+    # Proactive rate-limit throttle: check the Lakebase-backed windowed usage
+    # counter before spending more of the dev key's budget (~100 req / 2 min).
+    budget = userstate.api_usage_now()
+    if budget["remaining"] <= 0:
+        mins = budget["window_seconds"] // 60
+        return [], (f"Riot API budget for this {mins}-min window is used up "
+                    f"({budget['used']}/{budget['limit']} calls). Try again in "
+                    f"~{budget['resets_in']}s, or use a production key."), None
     from riot.client import RiotAPIError, RiotClient
     from riot.models import participant_rows
 
@@ -426,6 +435,8 @@ def fetch_player_live(game_name, tag_line, platform, region, count, start_time, 
             if r["puuid"] == puuid:
                 rows.append(r)
                 break
+    # Meter this fetch's Riot calls against the shared windowed budget.
+    userstate.record_api_calls(client.request_count)
     if not rows:
         if rate_limited:
             return [], rate_limit_msg, None
@@ -670,81 +681,6 @@ def validate_riot_id(game_name: str, tag_line: str, platform: str, region: str):
         if isinstance(exc, RiotAPIError) and "404" in str(exc):
             return False
         return None  # network/egress/other -> let the job be the source of truth
-
-
-def trigger_refresh(
-    queue_mode: str = "both",
-    count: int = 25,
-    start_time: int | None = None,
-    game_name: str | None = None,
-    tag_line: str | None = None,
-    platform: str | None = None,
-    region: str | None = None,
-    refresh_mode: str = "fresh",
-) -> dict:
-    """Kick off an on-demand ingestion run via Jobs API run-now.
-
-    The UI toggles are forwarded as python_params to the spark_python_task,
-    which argparse-parses them (see jobs/ingest_matches.py).
-    """
-    job_id = os.environ.get("INGEST_JOB_ID", "")
-    if not job_id:
-        return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
-    # run_now python_params REPLACE the task's defaults, so pass the UC
-    # destination too. Use the runtime config (repointed by the first-run wizard
-    # via apply_active_destination) so job writes follow the chosen destination.
-    params = [
-        "--catalog", config.UC_CATALOG,
-        "--schema", config.UC_SCHEMA,
-        "--queue-mode", queue_mode, "--count", str(count),
-        "--refresh-mode", refresh_mode,
-    ]
-    if game_name:
-        params += ["--game-name", game_name]
-    if tag_line:
-        params += ["--tag-line", tag_line]
-    if platform:
-        params += ["--platform", platform]
-    if region:
-        params += ["--region", region]
-    if start_time is not None:
-        params += ["--start-time", str(start_time)]
-    try:
-        from databricks.sdk import WorkspaceClient
-
-        w = WorkspaceClient()
-        run = w.jobs.run_now(job_id=int(job_id), python_params=params)
-        userstate.log_job_run(run.run_id, "refresh", config.UC_CATALOG, config.UC_SCHEMA)
-        return {"status": "started", "run_id": run.run_id}
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
-
-
-def trigger_backfill(game_name, tag_line, platform, region, count, start_time, queue_mode):
-    """Run-now the job in summoner mode to backfill the player's full window into
-    their per-player table (the background pull). Returns {status, run_id}."""
-    job_id = os.environ.get("INGEST_JOB_ID", "")
-    if not job_id:
-        return {"status": "unconfigured", "message": "INGEST_JOB_ID not set."}
-    params = [
-        "--mode", "summoner",
-        "--catalog", config.UC_CATALOG,
-        "--schema", config.UC_SCHEMA,
-        "--game-name", game_name, "--tag-line", tag_line,
-        "--platform", platform, "--region", region,
-        "--queue-mode", queue_mode, "--count", str(count),
-    ]
-    if start_time is not None:
-        params += ["--start-time", str(start_time)]
-    try:
-        from databricks.sdk import WorkspaceClient
-
-        w = WorkspaceClient()
-        run = w.jobs.run_now(job_id=int(job_id), python_params=params)
-        userstate.log_job_run(run.run_id, "backfill", config.UC_CATALOG, config.UC_SCHEMA)
-        return {"status": "started", "run_id": run.run_id}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "message": str(exc)}
 
 
 def job_run_status(run_id) -> dict:

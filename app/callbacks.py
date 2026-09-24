@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, quote
 
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
+import chatbot
 import config
 import data_access
 import userstate
@@ -231,53 +232,18 @@ def register_callbacks(app) -> None:
                     {"rows": [], "label": rid, "error": error},
                     no_update, no_update, no_update)
 
-        # Background only when the user asked for MORE than one fast pull returns
-        # AND the preview filled the cap (so there are likely older games beyond).
-        if not (cnt > cap and len(rows) >= cap):
-            # Persist this player's data so every user ends up with their own table.
-            data_access.write_summoner_rows(gname, region_code, rows)
-            return (f"Analyzed {len(rows)} games for {rid} (saved to your table).",
-                    {"seq": n_clicks, "target": "analysis"},
-                    {"rows": rows, "label": rid, "error": None, "days": timeframe_days, "queue": qmode}, {}, True, [])
-
-        # Kick off the full backfill (up to `cnt`) into the per-player table.
-        bf = data_access.trigger_backfill(gname, region_code, platform, region,
-                                          cnt, full_start, qmode)
-        if bf.get("status") == "started":
-            store = {"run_id": bf["run_id"], "summoner": gname,
-                     "region": region_code, "status": "running"}
-            return (f"Showing your {len(rows)} most-recent games for {rid}; pulling "
-                    f"up to {cnt} in the background.",
-                    {"seq": n_clicks, "target": "analysis"},
-                    {"rows": rows, "label": rid, "error": None, "days": timeframe_days, "queue": qmode},
-                    store, False, _banner_loading(rid, len(rows), cnt))
-        return (f"Showing your {len(rows)} most-recent games for {rid} "
-                f"(background pull unavailable: {bf.get('message', '')}).",
+        # Persist this player's data so every user ends up with their own table.
+        # (The app analyzes the most-recent up-to-MAX_SYNC games live; there is no
+        # background backfill — the weekly SDP refreshes only the cohort benchmarks.)
+        data_access.write_summoner_rows(gname, region_code, rows)
+        note = ""
+        if cnt > cap and len(rows) >= cap:
+            note = (f" (showing your {cap} most-recent; a production Riot key lifts "
+                    "this limit)")
+        return (f"Analyzed {len(rows)} games for {rid} (saved to your table){note}.",
                 {"seq": n_clicks, "target": "analysis"},
-                {"rows": rows, "label": rid, "error": None, "days": timeframe_days, "queue": qmode}, {}, True, [])
-
-    # Poll the background backfill; reveal the reload button when it's done.
-    @app.callback(
-        Output("backfill-banner", "children", allow_duplicate=True),
-        Output("backfill-poll", "disabled", allow_duplicate=True),
-        Output("backfill-store", "data", allow_duplicate=True),
-        Input("backfill-poll", "n_intervals"),
-        State("backfill-store", "data"),
-        prevent_initial_call=True,
-    )
-    def _poll(_n, store):
-        store = store or {}
-        if store.get("status") != "running" or not store.get("run_id"):
-            return no_update, True, no_update
-        st = data_access.job_run_status(store["run_id"])
-        life, result = st.get("life"), st.get("result")
-        if life == "TERMINATED" and result == "SUCCESS":
-            return (_banner_ready(store["summoner"], store["region"]), True,
-                    {**store, "status": "done"})
-        if life in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED") or \
-                result in ("FAILED", "TIMEDOUT", "CANCELED"):
-            return _banner_failed(), True, {**store, "status": "failed"}
-        return no_update, False, no_update  # still running
+                {"rows": rows, "label": rid, "error": None, "days": timeframe_days,
+                 "queue": qmode}, {}, True, [])
 
     # One atomic render of the whole Trend Analysis view (KPIs, readiness, matches,
     # coaching narrative, AND the detailed-metrics table). Merged into a single
@@ -650,6 +616,56 @@ def register_callbacks(app) -> None:
                 _recent_searches_panel(userstate.recent_searches()),
                 _recent_runs_panel(userstate.recent_job_runs()))
 
+    # Riot API rate-limit budget (Lakebase windowed counter). Re-renders on load
+    # and after each fetch (player-store changes when a live fetch completes).
+    @app.callback(
+        Output("riot-budget", "children"),
+        Input("us-boot", "n_intervals"),
+        Input("player-store", "data"),
+        Input("userstate-refresh", "data"),
+    )
+    def _riot_budget(_boot, _player, _refresh):
+        return _riot_budget_panel(userstate.api_usage_now())
+
+    # ----------------------------------------------------------------------
+    # Data-assistant chatbot (lower-left) → Multi-Agent Supervisor endpoint.
+    # ----------------------------------------------------------------------
+    app.clientside_callback(
+        "function(n){ if(!n) return window.dash_clientside.no_update; "
+        "return [{'display':'flex'}, {'display':'none'}]; }",
+        Output("chat-panel", "style", allow_duplicate=True),
+        Output("chat-launcher", "style", allow_duplicate=True),
+        Input("chat-launcher", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    app.clientside_callback(
+        "function(n){ if(!n) return window.dash_clientside.no_update; "
+        "return [{'display':'none'}, {'display':'flex'}]; }",
+        Output("chat-panel", "style", allow_duplicate=True),
+        Output("chat-launcher", "style", allow_duplicate=True),
+        Input("chat-close", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+    @app.callback(
+        Output("chat-store", "data"),
+        Output("chat-log", "children"),
+        Output("chat-input", "value"),
+        Input("chat-send", "n_clicks"),
+        Input("chat-input", "n_submit"),
+        State("chat-input", "value"),
+        State("chat-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _chat_send(_clicks, _submits, text, history):
+        text = (text or "").strip()
+        if not text:
+            return no_update, no_update, no_update
+        history = (history or []) + [{"role": "user", "content": text}]
+        reply = chatbot.ask_mas(history)
+        history = history + [{"role": "assistant", "content": reply}]
+        return history, _chat_log(history), ""
+
     @app.callback(
         Output("userstate-refresh", "data", allow_duplicate=True),
         Input("save-player-btn", "n_clicks"),
@@ -765,6 +781,31 @@ def _recent_searches_panel(items):
         id={"type": "us-load", "rid": i.get("riot_id"), "reg": i.get("region"), "src": "recent"})
         for i in items]
     return html.Div(chips, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})
+
+
+def _chat_log(history):
+    """Render the chat history into message bubbles (assistant replies as
+    Markdown so Genie's tables/formatting render)."""
+    out = []
+    for m in history or []:
+        content = m.get("content", "")
+        if m.get("role") == "assistant":
+            out.append(dcc.Markdown(content, className="chat-msg bot", link_target="_blank"))
+        else:
+            out.append(html.Div(content, className="chat-msg user"))
+    return out
+
+
+def _riot_budget_panel(u):
+    used, limit = u.get("used", 0), u.get("limit", 100)
+    remaining = u.get("remaining", limit)
+    color = "#1ae6ce" if remaining > 20 else ("#e6c01a" if remaining > 0 else "#ff6b6b")
+    mins = u.get("window_seconds", 120) // 60
+    return html.Div(style={"fontSize": "12px", "marginTop": "8px"}, children=[
+        html.Span("Riot API budget: ", style={"color": "#85A1AD"}),
+        html.Span(f"{used}/{limit}", style={"color": color, "fontWeight": "600"}),
+        html.Span(f" calls this {mins}-min window", style={"color": "#85A1AD"}),
+    ])
 
 
 def _run_status_color(status):

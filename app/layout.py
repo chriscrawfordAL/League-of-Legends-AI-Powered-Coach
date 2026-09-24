@@ -99,6 +99,7 @@ def _configure_tab() -> html.Div:
                 ]),
                 html.Div(id="refresh-status",
                          style={"color": "#85A1AD", "fontSize": "13px", "marginTop": "12px"}),
+                html.Div(id="riot-budget"),  # Riot API rate-limit budget (Lakebase)
             ]),
         ]),
         # Per-user state (Lakebase): saved players + recent searches.
@@ -165,6 +166,7 @@ def serve_layout() -> html.Div:
         dcc.Store(id="setup-store"),      # first-run wizard state {step, catalog, schema, run_id, status}
         dcc.Store(id="userstate-refresh", data=0),  # bumped to re-render saved players/searches
         dcc.Interval(id="us-boot", interval=700, n_intervals=0, max_intervals=1),  # restore prefs on load
+        dcc.Store(id="chat-store", data=[]),  # data-assistant chat history [{role, content}]
         dcc.Interval(id="backfill-poll", interval=15000, n_intervals=0, disabled=True),
         # One-shot boot trigger: fires once on load to decide whether to show the
         # first-run setup wizard. `setup-poll` drives the cohort-seed progress.
@@ -208,6 +210,41 @@ def serve_layout() -> html.Div:
         # URL-driven pages (hidden until their ?view= is set).
         _itemization_view(),
         _macro_view(),
+        _chatbot(),
+    ])
+
+
+def _chatbot() -> html.Div:
+    """Lower-left chat launcher + panel. Talks to the Multi-Agent Supervisor,
+    which routes questions to a per-table Genie agent over the coaching data."""
+    return html.Div([
+        html.Button("💬", id="chat-launcher", n_clicks=0, className="chat-launcher",
+                    title="Ask the data assistant"),
+        html.Div(id="chat-panel", className="chat-panel", style={"display": "none"},
+                 children=[
+            html.Div(className="chat-header", children=[
+                html.Span("Genie Assistant", className="chat-title"),
+                html.Button("✕", id="chat-close", n_clicks=0, className="chat-close"),
+            ]),
+            dcc.Loading(
+                html.Div(id="chat-log", className="chat-log", children=[
+                    html.Div("Ask me about the League data — matches, per-player "
+                             "stats, ranks, or the tier/role benchmarks. I route your "
+                             "question to the right table.", className="chat-msg bot"),
+                ]),
+                delay_show=150,
+                custom_spinner=html.Div("Thinking…", className="chat-thinking"),
+                # Make the Loading wrapper the flex scroll container so chat-log
+                # can actually scroll (default wrapper has no height → no scroll).
+                parent_style={"flex": "1", "minHeight": "0", "display": "flex",
+                              "flexDirection": "column", "overflow": "hidden"},
+            ),
+            html.Div(className="chat-inputrow", children=[
+                dcc.Input(id="chat-input", type="text", n_submit=0,
+                          placeholder="Ask about the data…", className="chat-input"),
+                html.Button("Send", id="chat-send", n_clicks=0, className="chat-send"),
+            ]),
+        ]),
     ])
 
 
